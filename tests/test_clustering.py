@@ -6,6 +6,7 @@ from cobaldclusterisation.clustering import (
     evaluate_clusters,
     fit_predict_clusters,
     hierarchy_ancestor_labels,
+    run_clustering_suite,
     summarize_clusters,
 )
 
@@ -69,3 +70,33 @@ def test_hierarchy_ancestor_labels() -> None:
     labels = hierarchy_ancestor_labels(["ANIMAL", "MONEY", "_"], hierarchy, depth=1)
 
     assert labels.tolist() == ["ENTITY", "ENTITY", "_"]
+
+
+def test_run_clustering_suite_accepts_progress_flag() -> None:
+    embeddings = np.array(
+        [
+            [0.0, 0.0],
+            [0.1, 0.0],
+            [5.0, 5.0],
+            [5.2, 5.0],
+        ],
+        dtype=np.float32,
+    )
+    payload = {"embeddings": embeddings, "tokens": _tokens()}
+
+    results = run_clustering_suite(
+        payload,
+        configs=[
+            ClusterConfig(
+                algorithm="kmeans",
+                n_clusters=2,
+                normalize=False,
+                random_state=0,
+                n_init=1,
+            )
+        ],
+        show_progress=True,
+    )
+
+    assert len(results) == 1
+    assert results[0]["labels"].shape == (4,)

@@ -21,6 +21,7 @@ from sklearn.metrics import (
     v_measure_score,
 )
 from sklearn.preprocessing import normalize as l2_normalize
+from tqdm.auto import tqdm
 
 from .data import load_semclass_hierarchy
 from .embeddings import load_embeddings_pickle
@@ -386,21 +387,35 @@ def run_clustering(
     config: ClusterConfig | None = None,
     hierarchy: pd.DataFrame | str | Path | None = None,
     hierarchy_depths: Sequence[int] = (1, 2, 3),
+    show_progress: bool = False,
 ) -> dict[str, object]:
     """Run one clustering configuration and return labels, scores, and summaries."""
 
     config = config or ClusterConfig()
     matrix = _as_float_matrix(embeddings, normalize=config.normalize)
-    labels, model = fit_predict_clusters(embeddings, config=config)
-    scores = evaluate_clusters(
-        matrix,
-        labels,
-        tokens=tokens,
-        hierarchy=hierarchy,
-        hierarchy_depths=hierarchy_depths,
-        random_state=config.random_state,
+    progress = tqdm(
+        total=3,
+        desc=f"{config.algorithm} k={config.n_clusters}",
+        disable=not show_progress,
+        leave=False,
     )
-    summary = summarize_clusters(matrix, labels, tokens)
+
+    try:
+        labels, model = fit_predict_clusters(embeddings, config=config)
+        progress.update(1)
+        scores = evaluate_clusters(
+            matrix,
+            labels,
+            tokens=tokens,
+            hierarchy=hierarchy,
+            hierarchy_depths=hierarchy_depths,
+            random_state=config.random_state,
+        )
+        progress.update(1)
+        summary = summarize_clusters(matrix, labels, tokens)
+        progress.update(1)
+    finally:
+        progress.close()
     return {
         "labels": labels,
         "scores": scores,
@@ -416,6 +431,7 @@ def run_clustering_suite(
     configs: Sequence[ClusterConfig] | None = None,
     hierarchy: pd.DataFrame | str | Path | None = None,
     hierarchy_depths: Sequence[int] = (1, 2, 3),
+    show_progress: bool = True,
 ) -> list[dict[str, object]]:
     """Run several clustering configurations against an embedding pickle payload."""
 
@@ -427,16 +443,24 @@ def run_clustering_suite(
     embeddings = np.asarray(payload["embeddings"], dtype=np.float32)
     tokens = payload["tokens"]
     configs = list(configs or default_cluster_configs())
-    return [
-        run_clustering(
-            embeddings,
-            tokens,
-            config=config,
-            hierarchy=hierarchy,
-            hierarchy_depths=hierarchy_depths,
+    results: list[dict[str, object]] = []
+    progress = tqdm(configs, desc="Clustering runs", disable=not show_progress)
+    for config in progress:
+        progress.set_postfix(
+            algorithm=config.algorithm,
+            k=config.n_clusters if config.algorithm != "dbscan" else "dbscan",
         )
-        for config in configs
-    ]
+        results.append(
+            run_clustering(
+                embeddings,
+                tokens,
+                config=config,
+                hierarchy=hierarchy,
+                hierarchy_depths=hierarchy_depths,
+                show_progress=False,
+            )
+        )
+    return results
 
 
 def save_clustering_results(

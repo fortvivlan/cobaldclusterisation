@@ -99,6 +99,7 @@ def _cmd_cluster(args: argparse.Namespace) -> None:
         configs=_cluster_configs(args),
         hierarchy=hierarchy,
         hierarchy_depths=args.hierarchy_depths,
+        show_progress=not args.no_progress,
     )
     output_path = save_clustering_results(results, args.output)
     scores_path = output_path.with_suffix(".scores.csv")
@@ -164,6 +165,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     cluster_parser.add_argument("--min-samples", type=int, default=10)
     cluster_parser.add_argument("--seed", type=int, default=42)
     cluster_parser.add_argument("--no-normalize", dest="normalize", action="store_false")
+    cluster_parser.add_argument("--no-progress", action="store_true")
     cluster_parser.set_defaults(normalize=True)
     cluster_parser.set_defaults(func=_cmd_cluster)
 

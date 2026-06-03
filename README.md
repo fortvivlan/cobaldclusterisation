@@ -163,6 +163,7 @@ result = run_clustering(
     ),
     hierarchy=paths.hierarchy_csv,
     hierarchy_depths=(1, 2, 3),
+    show_progress=True,
 )
 
 result["scores"]
@@ -182,10 +183,15 @@ results = run_clustering_suite(
     payload,
     configs=default_cluster_configs(n_clusters=(50, 100)),
     hierarchy=paths.hierarchy_csv,
+    show_progress=True,
 )
 
 scores_to_dataframe(results)
 ```
+
+`run_clustering_suite(..., show_progress=True)` displays a `tqdm` progress bar
+in Colab while algorithm configurations are running. `run_clustering` also has
+a smaller progress bar for the fitting, scoring, and summary stages of one run.
 
 `AgglomerativeClustering` and `DBSCAN` are available through `ClusterConfig`,
 but they can be expensive on the full corpus. Use them first on a smaller
@@ -219,5 +225,8 @@ cobald cluster outputs/embeddings/rubert_tiny2.pkl \
   --n-clusters 100 \
   --output outputs/clusters/minibatch_k100.pkl
 ```
+
+The clustering CLI shows progress by default. Add `--no-progress` for quieter
+batch runs.
 
 Generated outputs under `outputs/` and pickle files are ignored by Git.
