@@ -104,6 +104,24 @@ def _select_hidden_state(outputs: object, *, layer: int) -> object:
     return outputs.hidden_states[layer]
 
 
+def _ensure_padding_token(tokenizer: object) -> None:
+    """Allow batched embedding extraction with decoder-only tokenizers."""
+
+    if getattr(tokenizer, "pad_token", None) is not None:
+        return
+    fallback_token = getattr(tokenizer, "eos_token", None) or getattr(
+        tokenizer,
+        "unk_token",
+        None,
+    )
+    if fallback_token is None:
+        raise ValueError(
+            "Tokenizer has no pad_token, eos_token, or unk_token. Set a padding "
+            "token before generating batched embeddings."
+        )
+    tokenizer.pad_token = fallback_token
+
+
 def generate_token_embeddings(
     sentences: Sequence[Sentence],
     *,
@@ -136,11 +154,14 @@ def generate_token_embeddings(
             "A fast tokenizer is required because token-to-subword alignment "
             "uses word_ids()."
         )
+    _ensure_padding_token(tokenizer)
 
     model_kwargs: dict[str, object] = {"trust_remote_code": config.trust_remote_code}
     if dtype is not None:
         model_kwargs["torch_dtype"] = dtype
     model = AutoModel.from_pretrained(config.model_name, **model_kwargs)
+    if getattr(model.config, "pad_token_id", None) is None:
+        model.config.pad_token_id = tokenizer.pad_token_id
     model.to(device)
     model.eval()
 

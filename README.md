@@ -126,6 +126,78 @@ no_punct_payload = generate_embeddings_from_corpus(
 )
 ```
 
+## Generate SambaLingo Embeddings
+
+`sambanovasystems/SambaLingo-Russian-Base` is a larger Llama-2-7B-style
+pretrained Russian/English model. It can be used by the same embedding
+pipeline, but it is much heavier than ruBERT tiny. Use a high-memory GPU
+runtime, `float16`, and a small batch size.
+
+If Hugging Face requires authentication or license acceptance for the model,
+log in before loading it:
+
+```python
+from huggingface_hub import notebook_login
+
+notebook_login()
+```
+
+Generate embeddings:
+
+```python
+from cobaldclusterisation.embeddings import (
+    EmbeddingConfig,
+    generate_embeddings_from_corpus,
+)
+
+sambalingo_config = EmbeddingConfig(
+    model_name="sambanovasystems/SambaLingo-Russian-Base",
+    batch_size=1,
+    device="cuda",
+    torch_dtype="float16",
+    max_length=512,
+    include_punctuation_context=True,
+)
+
+sambalingo_payload = generate_embeddings_from_corpus(
+    data_dir=paths.corpus_dir,
+    output_path="sambalingo_russian_base_cobald.pkl",
+    drive_dir="/content/drive/MyDrive/cobald_outputs",
+    config=sambalingo_config,
+    show_progress=True,
+)
+
+sambalingo_payload["embeddings"].shape
+```
+
+Cluster and display the scores as a table:
+
+```python
+from cobaldclusterisation.clustering import (
+    ClusterConfig,
+    run_clustering,
+    scores_to_dataframe,
+)
+
+sambalingo_result = run_clustering(
+    sambalingo_payload["embeddings"],
+    sambalingo_payload["tokens"],
+    config=ClusterConfig(
+        algorithm="minibatch_kmeans",
+        n_clusters=100,
+        random_state=42,
+    ),
+    hierarchy=paths.hierarchy_csv,
+    hierarchy_depths=(1, 2, 3),
+    show_progress=True,
+)
+
+sambalingo_scores = scores_to_dataframe([sambalingo_result])
+sambalingo_scores
+
+sambalingo_result["summary"].head(20)
+```
+
 To try another Hugging Face model in Colab, pass a different `model_name`.
 For larger Russian LLM checkpoints, reduce `batch_size`, use a GPU runtime, and
 set `trust_remote_code=True` only if the model repository requires it and you
@@ -166,7 +238,9 @@ result = run_clustering(
     show_progress=True,
 )
 
-result["scores"]
+single_run_scores = scores_to_dataframe([result])
+single_run_scores
+
 result["summary"].head(20)
 ```
 
@@ -186,7 +260,8 @@ results = run_clustering_suite(
     show_progress=True,
 )
 
-scores_to_dataframe(results)
+score_table = scores_to_dataframe(results)
+score_table
 ```
 
 `run_clustering_suite(..., show_progress=True)` displays a `tqdm` progress bar

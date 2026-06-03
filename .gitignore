@@ -224,3 +224,4 @@ hyperonims_hierarchy.csv
 outputs/
 *.pkl
 uv.lock
+AGENTS.md
