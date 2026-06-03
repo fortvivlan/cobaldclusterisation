@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cobaldclusterisation"
+version = "0.1.0"
+description = "Parsing, embedding, and clustering helpers for CoBaLD semantic hierarchy experiments."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.23",
+    "pandas>=1.5",
+    "scikit-learn>=1.2",
+    "tqdm>=4.64",
+]
+
+[project.scripts]
+cobald = "cobaldclusterisation.cli:main"
+
+[project.optional-dependencies]
+embeddings = [
+    "torch>=2.1",
+    "transformers>=4.40",
+]
+dev = [
+    "pytest>=7.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cobaldclusterisation"]

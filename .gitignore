@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project data and generated artifacts
+CobaldRus/
+semantic-hierarchy/
+hyperonims_hierarchy.csv
+outputs/
+*.pkl
+uv.lock
