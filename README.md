@@ -22,7 +22,7 @@ have 12 columns: `ID`, `FORM`, `LEMMA`, `UPOS`, `XPOS`, `FEATS`, `HEAD`,
 ## Install In Colab
 
 ```python
-!git clone https://github.com/<user>/cobaldclusterisation.git
+!git clone https://github.com/fortvivlan/cobaldclusterisation.git
 %cd cobaldclusterisation
 !pip install -e ".[embeddings]"
 ```
