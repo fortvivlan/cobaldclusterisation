@@ -53,8 +53,10 @@ def test_fit_evaluate_and_summarize_clusters() -> None:
 
     assert scores["semclass_exact_purity"] == 1.0
     assert scores["semclass_exact_n_labeled"] == 4.0
-    assert set(summary["size"]) == {2}
-    assert set(summary["representative_semclass"]) == {"ANIMAL", "MONEY"}
+    assert set(summary["token_count"]) == {2}
+    assert set(summary["lemma_count"]) == {2}
+    assert set(summary["semclasses"]) == {"ANIMAL", "MONEY"}
+    assert "\n" in "\n".join(summary["top_lemmas"])
 
 
 def test_hierarchy_ancestor_labels() -> None:

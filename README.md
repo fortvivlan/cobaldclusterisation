@@ -102,6 +102,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from openpyxl.styles import Alignment
 
 
 def metric_reference(metric_name):
@@ -186,6 +187,11 @@ def write_cluster_summary_excel(results, output_path):
             )
             sheet_name = f"{index}_{algorithm}_{cluster_part}"[:31]
             result["summary"].to_excel(writer, sheet_name=sheet_name, index=False)
+            worksheet = writer.sheets[sheet_name]
+            for row in worksheet.iter_rows():
+                for cell in row:
+                    cell.alignment = Alignment(wrap_text=True, vertical="top")
+            worksheet.freeze_panes = "A2"
     return str(output_path)
 ```
 
@@ -399,8 +405,10 @@ for index, result in enumerate(sambalingo_all_results, start=1):
 ```
 
 Cluster names are assigned by finding the actual token embedding closest to the
-cluster centroid. Summaries include cluster size, representative token, frequent
-lemmas, frequent semantic classes, and example contexts.
+cluster centroid. Summaries include token count, unique lemma count, frequent
+lemmas, frequent forms, all SEMCLASS labels found in the cluster, and example
+contexts. List fields use newline-separated values so they are readable as
+wrapped cells in Excel.
 
 ```python
 sambalingo_all_excel = write_cluster_summary_excel(
