@@ -155,163 +155,58 @@ from huggingface_hub import notebook_login
 notebook_login()
 ```
 
-Generate SambaLingo embeddings with conservative settings:
+Run the full SambaLingo baseline. The pipeline saves full embeddings, releases
+CUDA memory, builds 256-dimensional IncrementalPCA clustering features, and
+clusters the complete token set without sampling.
 
 ```python
-from cobaldclusterisation.embeddings import EmbeddingConfig, generate_embeddings_from_corpus
+from cobaldclusterisation.sambalingo_baseline import run
 
-sambalingo_config = EmbeddingConfig(
-    model_name="sambanovasystems/SambaLingo-Russian-Base",
-    batch_size=1,
+sambalingo_baseline = run(
+    data_dir=paths.corpus_dir,
+    hierarchy=paths.hierarchy_csv,
+    algorithms=["KMeans", "MiniBatchKMeans", "HDBSCAN"],
+    n_clusters=100,
+    output_dir="/content",
+    save_embeddings_to_drive=True,
+    drive_dir="/content/drive/MyDrive/cobald_outputs",
+    projection_n_components=256,
+    projection_batch_size=8192,
+    embedding_batch_size=1,
+    clustering_batch_size=4096,
     device="cuda",
     torch_dtype="float16",
-    max_length=512,
-    include_punctuation_context=True,
+    seed=42,
+    show_progress=True,
 )
 
-sambalingo_payload = generate_embeddings_from_corpus(
+sambalingo_baseline["paths"]
+```
+
+`sambalingo_baseline["paths"]["embeddings"]` points to the full SambaLingo
+embedding pickle. `sambalingo_baseline["paths"]["clustering_features"]` points
+to the reduced IncrementalPCA feature pickle used for clustering. The Excel
+summary, score CSV, and per-run score text files are saved under `/content/`.
+
+Agglomerative clustering is disabled above 50,000 rows unless explicitly
+overridden because it can require quadratic memory/time. To force it on the
+full corpus:
+
+```python
+sambalingo_baseline = run(
     data_dir=paths.corpus_dir,
-    output_path="sambalingo_russian_base_cobald.pkl",
-    drive_dir="/content/drive/MyDrive/cobald_outputs",
-    config=sambalingo_config,
-    show_progress=True,
-)
-
-sambalingo_payload["embeddings"].shape
-```
-
-Release CUDA memory after embedding extraction before clustering:
-
-```python
-import gc
-import torch
-
-gc.collect()
-torch.cuda.empty_cache()
-```
-
-Use reproducible samples for resource-heavy clustering comparisons. The
-K-Means sample can be larger; the all-algorithm sample is smaller because
-Agglomerative clustering and HDBSCAN can be much more memory-intensive.
-
-```python
-def sample_embedding_payload(payload, sample_size=20000, seed=42):
-    total = len(payload["tokens"])
-    if sample_size is None or sample_size >= total:
-        return payload
-    rng = np.random.default_rng(seed)
-    indices = np.sort(rng.choice(total, size=sample_size, replace=False))
-    return {
-        **payload,
-        "embeddings": payload["embeddings"][indices],
-        "tokens": payload["tokens"].iloc[indices].reset_index(drop=True),
-    }
-
-
-sambalingo_kmeans_sample = sample_embedding_payload(
-    sambalingo_payload,
-    sample_size=20000,
-    seed=42,
-)
-sambalingo_algorithm_sample = sample_embedding_payload(
-    sambalingo_payload,
-    sample_size=5000,
-    seed=42,
-)
-len(sambalingo_kmeans_sample["tokens"]), len(sambalingo_algorithm_sample["tokens"])
-```
-
-Run K-Means on the sample and download the cluster summary workbook:
-
-```python
-from cobaldclusterisation.clustering import ClusterConfig, run_clustering
-
-sambalingo_kmeans_result = run_clustering(
-    sambalingo_kmeans_sample["embeddings"],
-    sambalingo_kmeans_sample["tokens"],
-    config=ClusterConfig(
-        algorithm="kmeans",
-        n_clusters=100,
-        random_state=42,
-        n_init=5,
-    ),
     hierarchy=paths.hierarchy_csv,
-    hierarchy_depths=(1, 2, 3),
-    show_progress=True,
+    algorithms=["Agglomerative"],
+    n_clusters=100,
+    allow_quadratic_algorithms=True,
 )
-
-sambalingo_kmeans_excel = write_cluster_summary_excel(
-    [sambalingo_kmeans_result],
-    "outputs/clusters/sambalingo_kmeans_cluster_summary.xlsx",
-)
-files.download(sambalingo_kmeans_excel)
-
-print_result_scores("SambaLingo K-Means sample", sambalingo_kmeans_result)
-sambalingo_kmeans_result["summary"].head(20)
-```
-
-Run all available clustering algorithms on the smaller sample. Lower
-`sample_size` above if the runtime runs out of memory.
-
-```python
-from cobaldclusterisation.clustering import run_clustering_suite
-
-sambalingo_all_configs = [
-    ClusterConfig(
-        algorithm="minibatch_kmeans",
-        n_clusters=100,
-        random_state=42,
-        batch_size=4096,
-    ),
-    ClusterConfig(
-        algorithm="kmeans",
-        n_clusters=100,
-        random_state=42,
-        n_init=5,
-    ),
-    ClusterConfig(
-        algorithm="agglomerative",
-        n_clusters=100,
-    ),
-    ClusterConfig(
-        algorithm="hdbscan",
-        min_cluster_size=25,
-        min_samples=10,
-        metric="euclidean",
-        n_jobs=-1,
-    ),
-]
-
-sambalingo_all_results = run_clustering_suite(
-    sambalingo_algorithm_sample,
-    configs=sambalingo_all_configs,
-    hierarchy=paths.hierarchy_csv,
-    hierarchy_depths=(1, 2, 3),
-    show_progress=True,
-)
-
-for index, result in enumerate(sambalingo_all_results, start=1):
-    print_result_scores(f"SambaLingo all algorithms run {index}", result)
-    print()
 ```
 
 Cluster names are assigned by finding the actual token embedding closest to the
-cluster centroid. Summaries include token count, unique lemma count, frequent
-lemmas, frequent forms, all SEMCLASS labels found in the cluster, and example
-contexts. List fields use newline-separated values so they are readable as
-wrapped cells in Excel.
-
-```python
-sambalingo_all_excel = write_cluster_summary_excel(
-    sambalingo_all_results,
-    "outputs/clusters/sambalingo_all_algorithms_cluster_summaries.xlsx",
-)
-files.download(sambalingo_all_excel)
-```
-
-`run_clustering_suite(..., show_progress=True)` displays a `tqdm` progress bar
-in Colab while algorithm configurations are running. `run_clustering` also has
-a smaller progress bar for the fitting, scoring, and summary stages of one run.
+cluster centroid in the clustering feature space. Summaries include token
+count, unique lemma count, frequent lemmas, frequent forms, all SEMCLASS labels
+found in the cluster, and example contexts. List fields use newline-separated
+values so they are readable as wrapped cells in Excel.
 
 To try another Hugging Face model in Colab, pass a different `model_name`.
 For larger Russian LLM checkpoints, reduce `batch_size`, use a GPU runtime, and
@@ -319,6 +214,8 @@ set `trust_remote_code=True` only if the model repository requires it and you
 trust that code.
 
 ```python
+from cobaldclusterisation.embeddings import EmbeddingConfig
+
 config = EmbeddingConfig(
     model_name="<huggingface-russian-base-model-id>",
     batch_size=1,
