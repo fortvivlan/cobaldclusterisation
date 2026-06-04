@@ -124,6 +124,20 @@ def test_sambalingo_run_clusters_complete_payload(
         output_path.write_text("excel", encoding="utf-8")
         return str(output_path)
 
+    def fake_write_scores(
+        results: list[dict[str, object]],
+        *,
+        output_dir: Path,
+        label: str,
+    ) -> tuple[str, str, list[str]]:
+        scores_csv = output_dir / f"{label}_scores.csv"
+        scores_xlsx = output_dir / f"{label}_scores.xlsx"
+        scores_txt = output_dir / f"{label}_scores.txt"
+        scores_csv.write_text("metric,run_1\nsilhouette,0.5\n", encoding="utf-8")
+        scores_xlsx.write_text("excel", encoding="utf-8")
+        scores_txt.write_text("scores", encoding="utf-8")
+        return str(scores_csv), str(scores_xlsx), [str(scores_txt)]
+
     monkeypatch.setattr(
         sambalingo_baseline,
         "generate_embeddings_from_corpus",
@@ -135,6 +149,7 @@ def test_sambalingo_run_clusters_complete_payload(
         "write_cluster_summary_excel",
         fake_write_cluster_summary_excel,
     )
+    monkeypatch.setattr(sambalingo_baseline, "_write_scores", fake_write_scores)
 
     result = sambalingo_baseline.run(
         algorithms=["KMeans"],
@@ -149,4 +164,5 @@ def test_sambalingo_run_clusters_complete_payload(
     assert Path(result["paths"]["clustering_features"]).exists()
     assert Path(result["paths"]["excel"]).exists()
     assert Path(result["paths"]["scores_csv"]).exists()
+    assert Path(result["paths"]["scores_xlsx"]).exists()
     assert all(Path(path).exists() for path in result["paths"]["scores_txt"])

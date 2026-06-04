@@ -100,8 +100,9 @@ rubert_baseline["paths"]
 
 `rubert_baseline["paths"]["excel"]` points to the `.xlsx` summary file under
 `/content/`. Score tables are printed and also saved as `.txt` files listed in
-`rubert_baseline["paths"]["scores_txt"]`. A compact score CSV is saved as
-`rubert_baseline["paths"]["scores_csv"]`.
+`rubert_baseline["paths"]["scores_txt"]`. Metric-row score tables are saved as
+CSV and Excel files at `rubert_baseline["paths"]["scores_csv"]` and
+`rubert_baseline["paths"]["scores_xlsx"]`.
 
 To include HDBSCAN in the complete-corpus run:
 
@@ -186,7 +187,8 @@ sambalingo_baseline["paths"]
 `sambalingo_baseline["paths"]["embeddings"]` points to the full SambaLingo
 embedding pickle. `sambalingo_baseline["paths"]["clustering_features"]` points
 to the reduced IncrementalPCA feature pickle used for clustering. The Excel
-summary, score CSV, and per-run score text files are saved under `/content/`.
+summary, metric-row score CSV/XLSX, and per-run score text files are saved
+under `/content/`.
 
 Agglomerative clustering is disabled above 50,000 rows unless explicitly
 overridden because it can require quadratic memory/time. To force it on the
@@ -278,7 +280,8 @@ gigachat_baseline["paths"]
 `gigachat_baseline["paths"]["embeddings"]` points to the full GigaChat3
 embedding pickle. `gigachat_baseline["paths"]["clustering_features"]` points to
 the reduced IncrementalPCA feature pickle used for clustering. The Excel
-summary, score CSV, and per-run score text files are saved under `/content/`.
+summary, metric-row score CSV/XLSX, and per-run score text files are saved
+under `/content/`.
 Agglomerative clustering has the same full-corpus guard as the SambaLingo
 baseline.
 

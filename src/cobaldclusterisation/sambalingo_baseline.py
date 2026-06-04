@@ -22,9 +22,9 @@ from .embeddings import (
 from .rubert_baseline import (
     DEFAULT_COLAB_DIR,
     DEFAULT_DRIVE_DIR,
-    _write_scores,
     build_cluster_configs,
 )
+from .scores import write_scores as _write_scores
 from .summary_excel import write_cluster_summary_excel
 
 
@@ -39,6 +39,7 @@ class SambaLingoBaselinePaths:
     clustering_features: str
     excel: str
     scores_csv: str
+    scores_xlsx: str
     scores_txt: list[str]
 
 
@@ -318,13 +319,18 @@ def run(
         )
 
     excel_path = write_cluster_summary_excel(results, output_dir / excel_filename)
-    scores_csv, scores_txt = _write_scores(results, output_dir=output_dir, label=label)
+    scores_csv, scores_xlsx, scores_txt = _write_scores(
+        results,
+        output_dir=output_dir,
+        label=label,
+    )
 
     paths = SambaLingoBaselinePaths(
         embeddings=str(payload["saved_path"]),
         clustering_features=str(clustering_features_path),
         excel=excel_path,
         scores_csv=scores_csv,
+        scores_xlsx=scores_xlsx,
         scores_txt=scores_txt,
     )
     return {

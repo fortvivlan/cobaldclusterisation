@@ -66,6 +66,20 @@ def test_gigachat_run_uses_model_specific_embedding_defaults(
         output_path.write_text("excel", encoding="utf-8")
         return str(output_path)
 
+    def fake_write_scores(
+        results: list[dict[str, object]],
+        *,
+        output_dir: Path,
+        label: str,
+    ) -> tuple[str, str, list[str]]:
+        scores_csv = output_dir / f"{label}_scores.csv"
+        scores_xlsx = output_dir / f"{label}_scores.xlsx"
+        scores_txt = output_dir / f"{label}_scores.txt"
+        scores_csv.write_text("metric,run_1\nsilhouette,0.5\n", encoding="utf-8")
+        scores_xlsx.write_text("excel", encoding="utf-8")
+        scores_txt.write_text("scores", encoding="utf-8")
+        return str(scores_csv), str(scores_xlsx), [str(scores_txt)]
+
     monkeypatch.setattr(
         gigachat_baseline,
         "generate_embeddings_from_corpus",
@@ -77,6 +91,7 @@ def test_gigachat_run_uses_model_specific_embedding_defaults(
         "write_cluster_summary_excel",
         fake_write_cluster_summary_excel,
     )
+    monkeypatch.setattr(gigachat_baseline, "_write_scores", fake_write_scores)
 
     result = gigachat_baseline.run(
         algorithms=["KMeans"],
@@ -96,6 +111,7 @@ def test_gigachat_run_uses_model_specific_embedding_defaults(
     assert Path(result["paths"]["clustering_features"]).exists()
     assert Path(result["paths"]["excel"]).exists()
     assert Path(result["paths"]["scores_csv"]).exists()
+    assert Path(result["paths"]["scores_xlsx"]).exists()
     assert all(Path(path).exists() for path in result["paths"]["scores_txt"])
 
 
@@ -136,6 +152,15 @@ def test_gigachat_run_can_override_trust_remote_code(
         gigachat_baseline,
         "write_cluster_summary_excel",
         lambda results, output_path: str(output_path),
+    )
+    monkeypatch.setattr(
+        gigachat_baseline,
+        "_write_scores",
+        lambda results, output_dir, label: (
+            str(output_dir / f"{label}_scores.csv"),
+            str(output_dir / f"{label}_scores.xlsx"),
+            [],
+        ),
     )
 
     gigachat_baseline.run(

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -13,6 +15,7 @@ from cobaldclusterisation.rubert_baseline import (
     build_cluster_configs,
     format_score_table,
 )
+from cobaldclusterisation.scores import scores_to_metric_dataframe, write_scores
 
 
 def _tokens() -> pd.DataFrame:
@@ -163,3 +166,44 @@ def test_rubert_baseline_formats_score_table() -> None:
     assert "metric - result - reference note" in table
     assert "silhouette - 0.1235 - -1 to 1; higher is better" in table
     assert "n_noise - 2 - count; HDBSCAN noise points" in table
+
+
+def test_scores_to_metric_dataframe_uses_metric_rows() -> None:
+    results = [
+        {
+            "scores": {"silhouette": 0.5, "n_noise": 0},
+            "config": {"algorithm": "kmeans", "n_clusters": 2},
+        },
+        {
+            "scores": {"silhouette": 0.25, "n_noise": 3},
+            "config": {"algorithm": "hdbscan", "min_cluster_size": 10},
+        },
+    ]
+
+    scores = scores_to_metric_dataframe(results)
+
+    assert scores["metric"].tolist() == ["silhouette", "n_noise"]
+    assert scores.loc[0, "run_1_kmeans_k2"] == 0.5
+    assert scores.loc[1, "run_2_hdbscan_min10"] == 3
+
+
+def test_write_scores_saves_metric_csv_and_xlsx(tmp_path) -> None:
+    results = [
+        {
+            "scores": {"silhouette": 0.5, "n_noise": 0},
+            "config": {"algorithm": "kmeans", "n_clusters": 2, "normalize": True},
+        }
+    ]
+
+    scores_csv, scores_xlsx, scores_txt = write_scores(
+        results,
+        output_dir=tmp_path,
+        label="score test",
+    )
+
+    scores = pd.read_csv(scores_csv)
+
+    assert Path(scores_xlsx).exists()
+    assert len(scores_txt) == 1
+    assert scores["metric"].tolist() == ["silhouette", "n_noise"]
+    assert scores.loc[0, "run_1_kmeans_k2"] == 0.5

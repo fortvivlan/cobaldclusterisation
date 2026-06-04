@@ -7,12 +7,18 @@ from pathlib import Path
 import re
 from typing import Sequence
 
-import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
-from .clustering import ClusterConfig, run_clustering, scores_to_dataframe
+from .clustering import ClusterConfig, run_clustering
 from .embeddings import EmbeddingConfig, generate_embeddings_from_corpus
+from .scores import (
+    format_score_table,
+    format_score_value,
+    metric_reference,
+    print_result_scores,
+    write_scores as _write_scores,
+)
 from .summary_excel import write_cluster_summary_excel
 
 
@@ -28,6 +34,7 @@ class RubertBaselinePaths:
     embeddings: str
     excel: str
     scores_csv: str
+    scores_xlsx: str
     scores_txt: list[str]
 
 
@@ -112,120 +119,6 @@ def build_cluster_configs(
                 )
             )
     return configs
-
-
-def metric_reference(metric_name: str) -> str:
-    """Return the short score guide used in the README examples."""
-
-    if metric_name == "silhouette":
-        return "-1 to 1; higher is better"
-    if metric_name == "calinski_harabasz":
-        return "0 to +inf; higher is better"
-    if metric_name == "davies_bouldin":
-        return "0 to +inf; lower is better"
-    if metric_name == "n_clusters_found":
-        return "count; compare with requested or discovered cluster count"
-    if metric_name == "n_noise":
-        return "count; HDBSCAN noise points, lower is usually better"
-    if metric_name.endswith("_adjusted_rand"):
-        return "-1 to 1; higher is better, 0 is near random"
-    if metric_name.endswith(
-        (
-            "_normalized_mutual_info",
-            "_homogeneity",
-            "_completeness",
-            "_v_measure",
-            "_purity",
-        )
-    ):
-        return "0 to 1; higher is better"
-    if metric_name.endswith("_n_labeled"):
-        return "count of tokens with usable SEMCLASS labels"
-    return "inspect manually"
-
-
-def format_score_value(metric_name: str, value: object) -> str:
-    """Format score values consistently for printing and text files."""
-
-    if isinstance(value, (int, float, np.integer, np.floating)):
-        if pd.isna(value):
-            return "nan"
-        if metric_name in {"n_clusters_found", "n_noise"} or metric_name.endswith(
-            "_n_labeled"
-        ):
-            return str(int(value))
-        return f"{float(value):.4f}"
-    return str(value)
-
-
-def format_score_table(title: str, scores: dict[str, object]) -> str:
-    """Build a printable score table."""
-
-    lines = [title, "metric - result - reference note"]
-    for metric_name, value in scores.items():
-        lines.append(
-            f"{metric_name} - "
-            f"{format_score_value(metric_name, value)} - "
-            f"{metric_reference(metric_name)}"
-        )
-    return "\n".join(lines)
-
-
-def print_result_scores(label: str, result: dict[str, object]) -> str:
-    """Print and return one formatted result score table."""
-
-    config = result["config"]
-    algorithm = str(config["algorithm"])
-    if algorithm == "hdbscan":
-        run_details = (
-            f"min_cluster_size={config.get('min_cluster_size')}, "
-            f"min_samples={config.get('min_samples')}"
-        )
-    else:
-        run_details = f"k={config.get('n_clusters')}"
-    run_name = (
-        f"{label}: {algorithm}, "
-        f"{run_details}, "
-        f"normalize={config.get('normalize')}"
-    )
-    table = format_score_table(run_name, result["scores"])
-    print(table)
-    return table
-
-
-def _safe_filename(value: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
-    return cleaned.strip("._") or "run"
-
-
-def _write_scores(
-    results: Sequence[dict[str, object]],
-    *,
-    output_dir: Path,
-    label: str,
-) -> tuple[str, list[str]]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    scores_csv = output_dir / f"{_safe_filename(label)}_scores.csv"
-    scores_to_dataframe(results).to_csv(scores_csv, index=False)
-
-    score_txt_paths: list[str] = []
-    for index, result in enumerate(results):
-        table = print_result_scores(f"{label} run {index + 1}", result)
-        config = result["config"]
-        algorithm = str(config["algorithm"])
-        run_part = (
-            f"min{config.get('min_cluster_size')}"
-            if algorithm == "hdbscan"
-            else f"k{config.get('n_clusters')}"
-        )
-        scores_txt = output_dir / (
-            f"{_safe_filename(label)}_{index}_{algorithm}_{run_part}_scores.txt"
-        )
-        scores_txt.write_text(table + "\n", encoding="utf-8")
-        score_txt_paths.append(str(scores_txt))
-        print()
-
-    return str(scores_csv), score_txt_paths
 
 
 def run(
@@ -325,12 +218,17 @@ def run(
         )
 
     excel_path = write_cluster_summary_excel(results, output_dir / excel_filename)
-    scores_csv, scores_txt = _write_scores(results, output_dir=output_dir, label=label)
+    scores_csv, scores_xlsx, scores_txt = _write_scores(
+        results,
+        output_dir=output_dir,
+        label=label,
+    )
 
     paths = RubertBaselinePaths(
         embeddings=str(payload["saved_path"]),
         excel=excel_path,
         scores_csv=scores_csv,
+        scores_xlsx=scores_xlsx,
         scores_txt=scores_txt,
     )
     return {
