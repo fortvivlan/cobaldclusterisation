@@ -22,21 +22,27 @@ have 12 columns: `ID`, `FORM`, `LEMMA`, `UPOS`, `XPOS`, `FEATS`, `HEAD`,
 ## Colab Workflow 1: ruBERT Baseline
 
 This workflow installs the package, clones the external data repositories,
-generates `cointegrated/rubert-tiny2` embeddings, runs clustering, prints scores
-as `metric - result - reference note`, and downloads an Excel workbook with
-cluster summaries.
+generates `cointegrated/rubert-tiny2` embeddings, clusters the complete corpus,
+prints scores as `metric - result - reference note`, saves score text files, and
+writes an Excel workbook with cluster summaries under `/content/`.
 
 ```python
 !git clone https://github.com/fortvivlan/cobaldclusterisation.git
 %cd cobaldclusterisation
 !pip install -e ".[embeddings]" openpyxl
+!pip install -U scikit-learn
 ```
 
+Mount Google Drive before importing the baseline function if embeddings should
+be saved there:
+
 ```python
-from google.colab import drive, files
+from google.colab import drive
 
 drive.mount("/content/drive")
 ```
+
+Clone or locate the corpus and hierarchy before importing `run`:
 
 ```python
 from cobaldclusterisation import (
@@ -67,182 +73,66 @@ The default embedding target policy is surface non-punctuation tokens only.
 Decimal-ID ellipsis rows such as `2.1 #NULL` are parsed but are not embedding
 targets.
 
-The baseline model is `cointegrated/rubert-tiny2`. For tokens split into
-subwords, the token embedding is the mean of its subword hidden states.
+Run the full ruBERT baseline. Algorithm names are case-insensitive; supported
+values are `KMeans`, `MiniBatchKMeans`, `Agglomerative`, and `HDBSCAN`. The
+pipeline does not sample before clustering.
 
 ```python
-from cobaldclusterisation.embeddings import (
-    EmbeddingConfig,
-    generate_embeddings_from_corpus,
-)
+from cobaldclusterisation.rubert_baseline import run
 
-rubert_config = EmbeddingConfig(
-    model_name="cointegrated/rubert-tiny2",
-    batch_size=32,
-    device="cuda",
-    max_length=512,
-    include_punctuation_context=True,
-)
-
-rubert_payload = generate_embeddings_from_corpus(
+rubert_baseline = run(
     data_dir=paths.corpus_dir,
-    output_path="rubert_tiny2_cobald.pkl",
-    drive_dir="/content/drive/MyDrive/cobald_outputs",
-    config=rubert_config,
-    show_progress=True,
-)
-
-rubert_payload["embeddings"].shape, rubert_payload["tokens"].head()
-```
-
-Define notebook helpers for score printing and Excel export:
-
-```python
-from pathlib import Path
-
-import numpy as np
-import pandas as pd
-from openpyxl.styles import Alignment
-
-
-def metric_reference(metric_name):
-    if metric_name == "silhouette":
-        return "-1 to 1; higher is better"
-    if metric_name == "calinski_harabasz":
-        return "0 to +inf; higher is better"
-    if metric_name == "davies_bouldin":
-        return "0 to +inf; lower is better"
-    if metric_name == "n_clusters_found":
-        return "count; compare with requested cluster count"
-    if metric_name == "n_noise":
-        return "count; DBSCAN noise points, lower is usually better"
-    if metric_name.endswith("_adjusted_rand"):
-        return "-1 to 1; higher is better, 0 is near random"
-    if metric_name.endswith(
-        (
-            "_normalized_mutual_info",
-            "_homogeneity",
-            "_completeness",
-            "_v_measure",
-            "_purity",
-        )
-    ):
-        return "0 to 1; higher is better"
-    if metric_name.endswith("_n_labeled"):
-        return "count of tokens with usable SEMCLASS labels"
-    return "inspect manually"
-
-
-def format_score_value(metric_name, value):
-    if isinstance(value, (int, float, np.integer, np.floating)):
-        if pd.isna(value):
-            return "nan"
-        if metric_name in {"n_clusters_found", "n_noise"} or metric_name.endswith(
-            "_n_labeled"
-        ):
-            return str(int(value))
-        return f"{float(value):.4f}"
-    return str(value)
-
-
-def print_score_table(title, scores):
-    print(title)
-    print("metric - result - reference note")
-    for metric_name, value in scores.items():
-        print(
-            f"{metric_name} - "
-            f"{format_score_value(metric_name, value)} - "
-            f"{metric_reference(metric_name)}"
-        )
-
-
-def print_result_scores(label, result):
-    config = result["config"]
-    if config["algorithm"] == "dbscan":
-        run_details = (
-            f"eps={config.get('eps')}, "
-            f"min_samples={config.get('min_samples')}"
-        )
-    else:
-        run_details = f"k={config.get('n_clusters')}"
-    run_name = (
-        f"{label}: {config['algorithm']}, "
-        f"{run_details}, "
-        f"normalize={config.get('normalize')}"
-    )
-    print_score_table(run_name, result["scores"])
-
-
-def write_cluster_summary_excel(results, output_path):
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-        for index, result in enumerate(results):
-            config = result["config"]
-            algorithm = config["algorithm"]
-            cluster_part = (
-                f"k{config.get('n_clusters')}"
-                if algorithm != "dbscan"
-                else f"eps{config.get('eps')}"
-            )
-            sheet_name = f"{index}_{algorithm}_{cluster_part}"[:31]
-            result["summary"].to_excel(writer, sheet_name=sheet_name, index=False)
-            worksheet = writer.sheets[sheet_name]
-            for row in worksheet.iter_rows():
-                for cell in row:
-                    cell.alignment = Alignment(wrap_text=True, vertical="top")
-            worksheet.freeze_panes = "A2"
-    return str(output_path)
-```
-
-Run a scalable K-Means-family baseline and download the cluster summaries:
-
-```python
-from cobaldclusterisation.clustering import ClusterConfig, run_clustering
-
-rubert_result = run_clustering(
-    rubert_payload["embeddings"],
-    rubert_payload["tokens"],
-    config=ClusterConfig(
-        algorithm="minibatch_kmeans",
-        n_clusters=100,
-        random_state=42,
-        batch_size=4096,
-    ),
     hierarchy=paths.hierarchy_csv,
-    hierarchy_depths=(1, 2, 3),
+    algorithms=["KMeans", "MiniBatchKMeans"],
+    n_clusters=100,
+    output_dir="/content",
+    save_embeddings_to_drive=True,
+    drive_dir="/content/drive/MyDrive/cobald_outputs",
+    embedding_batch_size=32,
+    clustering_batch_size=4096,
+    device="cuda",
+    seed=42,
     show_progress=True,
 )
 
-print_result_scores("ruBERT baseline", rubert_result)
-rubert_result["summary"].head(20)
+rubert_baseline["paths"]
 ```
 
+`rubert_baseline["paths"]["excel"]` points to the `.xlsx` summary file under
+`/content/`. Score tables are printed and also saved as `.txt` files listed in
+`rubert_baseline["paths"]["scores_txt"]`. A compact score CSV is saved as
+`rubert_baseline["paths"]["scores_csv"]`.
+
+To include HDBSCAN in the complete-corpus run:
+
 ```python
-rubert_excel = write_cluster_summary_excel(
-    [rubert_result],
-    "outputs/clusters/rubert_tiny2_cluster_summary.xlsx",
+rubert_baseline = run(
+    data_dir=paths.corpus_dir,
+    hierarchy=paths.hierarchy_csv,
+    algorithms=["KMeans", "MiniBatchKMeans", "HDBSCAN"],
+    n_clusters=100,
+    min_cluster_size=25,
+    min_samples=10,
+    hdbscan_n_jobs=-1,
 )
-files.download(rubert_excel)
 ```
 
 To test whether punctuation adds noise, run the same model with punctuation
 removed from transformer contexts. The target token count stays the same.
 
 ```python
-no_punct_config = EmbeddingConfig(
-    model_name="cointegrated/rubert-tiny2",
-    batch_size=32,
-    device="cuda",
-    max_length=512,
-    include_punctuation_context=False,
-)
-
-no_punct_payload = generate_embeddings_from_corpus(
+rubert_no_punct = run(
     data_dir=paths.corpus_dir,
-    output_path="rubert_tiny2_cobald_no_punct_context.pkl",
-    drive_dir="/content/drive/MyDrive/cobald_outputs",
-    config=no_punct_config,
+    hierarchy=paths.hierarchy_csv,
+    algorithms=["MiniBatchKMeans"],
+    n_clusters=100,
+    output_dir="/content",
+    embedding_filename="rubert_tiny2_cobald_no_punct_context.pkl",
+    excel_filename="rubert_tiny2_no_punct_cluster_summaries.xlsx",
+    label="rubert_tiny2_no_punct",
+    embedding_batch_size=32,
+    device="cuda",
+    include_punctuation_context=False,
     show_progress=True,
 )
 ```
@@ -302,7 +192,7 @@ torch.cuda.empty_cache()
 
 Use reproducible samples for resource-heavy clustering comparisons. The
 K-Means sample can be larger; the all-algorithm sample is smaller because
-Agglomerative clustering and DBSCAN can be much more memory-intensive.
+Agglomerative clustering and HDBSCAN can be much more memory-intensive.
 
 ```python
 def sample_embedding_payload(payload, sample_size=20000, seed=42):
@@ -384,10 +274,11 @@ sambalingo_all_configs = [
         n_clusters=100,
     ),
     ClusterConfig(
-        algorithm="dbscan",
-        eps=0.7,
+        algorithm="hdbscan",
+        min_cluster_size=25,
         min_samples=10,
         metric="euclidean",
+        n_jobs=-1,
     ),
 ]
 

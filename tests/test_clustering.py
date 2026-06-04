@@ -9,6 +9,10 @@ from cobaldclusterisation.clustering import (
     run_clustering_suite,
     summarize_clusters,
 )
+from cobaldclusterisation.rubert_baseline import (
+    build_cluster_configs,
+    format_score_table,
+)
 
 
 def _tokens() -> pd.DataFrame:
@@ -102,3 +106,34 @@ def test_run_clustering_suite_accepts_progress_flag() -> None:
 
     assert len(results) == 1
     assert results[0]["labels"].shape == (4,)
+
+
+def test_rubert_baseline_builds_colab_friendly_configs() -> None:
+    configs = build_cluster_configs(
+        algorithms=["KMeans", "MiniBatchKMeans", "HDBSCAN"],
+        n_clusters=[50, 100],
+        min_cluster_size=25,
+        hdbscan_n_jobs=-1,
+    )
+
+    assert [config.algorithm for config in configs] == [
+        "kmeans",
+        "kmeans",
+        "minibatch_kmeans",
+        "minibatch_kmeans",
+        "hdbscan",
+    ]
+    assert [config.n_clusters for config in configs[:4]] == [50, 100, 50, 100]
+    assert configs[-1].min_cluster_size == 25
+    assert configs[-1].n_jobs == -1
+
+
+def test_rubert_baseline_formats_score_table() -> None:
+    table = format_score_table(
+        "ruBERT baseline",
+        {"silhouette": 0.12345, "n_noise": 2},
+    )
+
+    assert "metric - result - reference note" in table
+    assert "silhouette - 0.1235 - -1 to 1; higher is better" in table
+    assert "n_noise - 2 - count; HDBSCAN noise points" in table

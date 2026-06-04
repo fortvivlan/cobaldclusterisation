@@ -9,7 +9,7 @@ from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
-from sklearn.cluster import AgglomerativeClustering, DBSCAN, KMeans, MiniBatchKMeans
+from sklearn.cluster import AgglomerativeClustering, KMeans, MiniBatchKMeans
 from sklearn.metrics import (
     adjusted_rand_score,
     calinski_harabasz_score,
@@ -38,10 +38,25 @@ class ClusterConfig:
     normalize: bool = True
     batch_size: int = 4096
     n_init: int = 10
-    eps: float = 0.5
     min_samples: int = 10
+    min_cluster_size: int = 10
+    cluster_selection_epsilon: float = 0.0
+    cluster_selection_method: str = "eom"
+    allow_single_cluster: bool = False
+    n_jobs: int | None = None
     linkage: str = "ward"
     metric: str = "euclidean"
+
+
+def _require_hdbscan() -> object:
+    try:
+        from sklearn.cluster import HDBSCAN
+    except ImportError as exc:
+        raise ImportError(
+            "HDBSCAN requires scikit-learn with sklearn.cluster.HDBSCAN. "
+            "In Colab, install or upgrade with: pip install -U scikit-learn"
+        ) from exc
+    return HDBSCAN
 
 
 def _as_float_matrix(embeddings: np.ndarray, *, normalize: bool) -> np.ndarray:
@@ -85,16 +100,21 @@ def fit_predict_clusters(
         if config.linkage != "ward":
             kwargs["metric"] = config.metric
         model = AgglomerativeClustering(**kwargs)
-    elif algorithm == "dbscan":
-        model = DBSCAN(
-            eps=config.eps,
+    elif algorithm == "hdbscan":
+        HDBSCAN = _require_hdbscan()
+        model = HDBSCAN(
+            min_cluster_size=config.min_cluster_size,
             min_samples=config.min_samples,
+            cluster_selection_epsilon=config.cluster_selection_epsilon,
+            cluster_selection_method=config.cluster_selection_method,
+            allow_single_cluster=config.allow_single_cluster,
+            n_jobs=config.n_jobs,
             metric=config.metric,
         )
     else:
         raise ValueError(
             "Unknown algorithm. Use one of: kmeans, minibatch_kmeans, "
-            "agglomerative, dbscan."
+            "agglomerative, hdbscan."
         )
 
     labels = model.fit_predict(matrix)
@@ -399,9 +419,14 @@ def run_clustering(
 
     config = config or ClusterConfig()
     matrix = _as_float_matrix(embeddings, normalize=config.normalize)
+    run_label = (
+        f"{config.algorithm} min_cluster_size={config.min_cluster_size}"
+        if config.algorithm.lower() == "hdbscan"
+        else f"{config.algorithm} k={config.n_clusters}"
+    )
     progress = tqdm(
         total=3,
-        desc=f"{config.algorithm} k={config.n_clusters}",
+        desc=run_label,
         disable=not show_progress,
         leave=False,
     )
@@ -452,9 +477,10 @@ def run_clustering_suite(
     results: list[dict[str, object]] = []
     progress = tqdm(configs, desc="Clustering runs", disable=not show_progress)
     for config in progress:
+        algorithm = config.algorithm.lower()
         progress.set_postfix(
             algorithm=config.algorithm,
-            k=config.n_clusters if config.algorithm != "dbscan" else "dbscan",
+            k=config.n_clusters if algorithm != "hdbscan" else "hdbscan",
         )
         results.append(
             run_clustering(

@@ -68,14 +68,15 @@ def _cmd_embed(args: argparse.Namespace) -> None:
 def _cluster_configs(args: argparse.Namespace) -> list[ClusterConfig]:
     configs: list[ClusterConfig] = []
     for algorithm in args.algorithms:
-        if algorithm == "dbscan":
+        if algorithm == "hdbscan":
             configs.append(
                 ClusterConfig(
                     algorithm=algorithm,
-                    eps=args.eps,
                     min_samples=args.min_samples,
+                    min_cluster_size=args.min_cluster_size,
                     random_state=args.seed,
                     normalize=args.normalize,
+                    metric=args.metric,
                 )
             )
             continue
@@ -87,6 +88,7 @@ def _cluster_configs(args: argparse.Namespace) -> list[ClusterConfig]:
                     random_state=args.seed,
                     normalize=args.normalize,
                     batch_size=args.batch_size,
+                    metric=args.metric,
                 )
             )
     return configs
@@ -157,12 +159,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--algorithms",
         nargs="+",
         default=["minibatch_kmeans"],
-        choices=["kmeans", "minibatch_kmeans", "agglomerative", "dbscan"],
+        choices=["kmeans", "minibatch_kmeans", "agglomerative", "hdbscan"],
     )
     cluster_parser.add_argument("--n-clusters", type=int, nargs="+", default=[100])
     cluster_parser.add_argument("--batch-size", type=int, default=4096)
-    cluster_parser.add_argument("--eps", type=float, default=0.5)
     cluster_parser.add_argument("--min-samples", type=int, default=10)
+    cluster_parser.add_argument("--min-cluster-size", type=int, default=10)
+    cluster_parser.add_argument("--metric", default="euclidean")
     cluster_parser.add_argument("--seed", type=int, default=42)
     cluster_parser.add_argument("--no-normalize", dest="normalize", action="store_false")
     cluster_parser.add_argument("--no-progress", action="store_true")
