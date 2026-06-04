@@ -22,7 +22,7 @@ cobald = "cobaldclusterisation.cli:main"
 [project.optional-dependencies]
 embeddings = [
     "torch>=2.1",
-    "transformers>=4.40",
+    "transformers>=4.53.2",
 ]
 dev = [
     "pytest>=7.4",

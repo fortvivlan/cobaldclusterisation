@@ -225,6 +225,63 @@ config = EmbeddingConfig(
 )
 ```
 
+## Colab Workflow 3: GigaChat3 Base
+
+`ai-sage/GigaChat3-10B-A1.8B-base` is a DeepSeek-V3-style causal language
+model with 10B total and 1.8B active parameters. Its Hugging Face quickstart
+uses `AutoModelForCausalLM` for generation, but the embedding baseline can use
+the same hidden-state extraction pipeline as the other baselines because
+Transformers exposes the underlying DeepSeek-V3 model hidden states. Use a
+recent Transformers release, a high-memory GPU runtime, `bfloat16`, and
+`batch_size=1`. The model repository is about 23 GB, and full embeddings are
+saved before PCA projection.
+
+Run the install, Drive, data, and helper cells from the ruBERT workflow first.
+If Hugging Face requires authentication for the model, log in before loading
+it:
+
+```python
+from huggingface_hub import notebook_login
+
+notebook_login()
+```
+
+Run the full GigaChat3 baseline. The pipeline saves full embeddings, releases
+CUDA memory, builds 256-dimensional IncrementalPCA clustering features, and
+clusters the complete token set without sampling.
+
+```python
+from cobaldclusterisation.gigachat_baseline import run
+
+gigachat_baseline = run(
+    data_dir=paths.corpus_dir,
+    hierarchy=paths.hierarchy_csv,
+    algorithms=["KMeans", "MiniBatchKMeans", "HDBSCAN"],
+    n_clusters=100,
+    output_dir="/content",
+    save_embeddings_to_drive=True,
+    drive_dir="/content/drive/MyDrive/cobald_outputs",
+    projection_n_components=256,
+    projection_batch_size=8192,
+    embedding_batch_size=1,
+    clustering_batch_size=4096,
+    device="cuda",
+    torch_dtype="bfloat16",
+    trust_remote_code=False,
+    seed=42,
+    show_progress=True,
+)
+
+gigachat_baseline["paths"]
+```
+
+`gigachat_baseline["paths"]["embeddings"]` points to the full GigaChat3
+embedding pickle. `gigachat_baseline["paths"]["clustering_features"]` points to
+the reduced IncrementalPCA feature pickle used for clustering. The Excel
+summary, score CSV, and per-run score text files are saved under `/content/`.
+Agglomerative clustering has the same full-corpus guard as the SambaLingo
+baseline.
+
 ## CLI Examples
 
 After `pip install -e ".[embeddings]"`:
