@@ -13,6 +13,7 @@ from sklearn.decomposition import IncrementalPCA
 from sklearn.preprocessing import normalize as l2_normalize
 from tqdm.auto import tqdm
 
+from .baseline_payloads import load_saved_embedding_payload
 from .clustering import ClusterConfig, run_clustering
 from .embeddings import (
     EmbeddingConfig,
@@ -192,6 +193,7 @@ def run(
     save_embeddings_to_drive: bool = False,
     drive_dir: str | Path = DEFAULT_DRIVE_DIR,
     embedding_filename: str = "sambalingo_russian_base_cobald.pkl",
+    embeddings_path: str | Path | None = None,
     clustering_features_filename: str | None = None,
     excel_filename: str = "sambalingo_russian_base_cluster_summaries.xlsx",
     label: str = "sambalingo_russian_base",
@@ -239,30 +241,33 @@ def run(
         )
     drive_output_dir = Path(drive_dir) if save_embeddings_to_drive else None
 
-    embedding_config = EmbeddingConfig(
-        model_name=MODEL_NAME,
-        batch_size=embedding_batch_size,
-        device=device,
-        torch_dtype=torch_dtype,
-        max_length=max_length,
-        seed=seed,
-        normalize=normalize_embeddings,
-        include_punctuation_context=include_punctuation_context,
-    )
+    if embeddings_path is None:
+        embedding_config = EmbeddingConfig(
+            model_name=MODEL_NAME,
+            batch_size=embedding_batch_size,
+            device=device,
+            torch_dtype=torch_dtype,
+            max_length=max_length,
+            seed=seed,
+            normalize=normalize_embeddings,
+            include_punctuation_context=include_punctuation_context,
+        )
 
-    payload = generate_embeddings_from_corpus(
-        data_dir=data_dir,
-        output_path=embedding_output_path,
-        drive_dir=drive_output_dir,
-        splits=splits,
-        config=embedding_config,
-        show_progress=show_progress,
-    )
+        payload = generate_embeddings_from_corpus(
+            data_dir=data_dir,
+            output_path=embedding_output_path,
+            drive_dir=drive_output_dir,
+            splits=splits,
+            config=embedding_config,
+            show_progress=show_progress,
+        )
+    else:
+        payload = load_saved_embedding_payload(embeddings_path)
     print(f"embeddings_shape={payload['embeddings'].shape}")
     print(f"tokens={len(payload['tokens'])}")
     print(f"embeddings_saved={payload['saved_path']}")
 
-    if release_cuda_after_embeddings:
+    if embeddings_path is None and release_cuda_after_embeddings:
         _release_cuda_memory()
 
     clustering_payload = make_clustering_payload(

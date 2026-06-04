@@ -6,6 +6,7 @@ import pytest
 
 from cobaldclusterisation.clustering import ClusterConfig
 from cobaldclusterisation import sambalingo_baseline
+from cobaldclusterisation.embeddings import save_embeddings_pickle
 from cobaldclusterisation.sambalingo_baseline import (
     _guard_quadratic_algorithms,
     make_clustering_payload,
@@ -166,3 +167,68 @@ def test_sambalingo_run_clusters_complete_payload(
     assert Path(result["paths"]["scores_csv"]).exists()
     assert Path(result["paths"]["scores_xlsx"]).exists()
     assert all(Path(path).exists() for path in result["paths"]["scores_txt"])
+
+
+def test_sambalingo_run_can_use_saved_embeddings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    saved_path = save_embeddings_pickle(
+        {
+            "embeddings": np.arange(48, dtype=np.float32).reshape(8, 6),
+            "tokens": _tokens(8),
+            "config": {"model_name": "saved"},
+        },
+        tmp_path / "saved_embeddings.pkl",
+    )
+    seen_shapes: list[tuple[int, int]] = []
+
+    def fake_run_clustering(
+        clustering_embeddings: np.ndarray,
+        clustering_tokens: pd.DataFrame,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        seen_shapes.append(clustering_embeddings.shape)
+        assert len(clustering_tokens) == 8
+        return {
+            "labels": np.zeros(8, dtype=np.int64),
+            "scores": {"silhouette": 0.5},
+            "summary": pd.DataFrame({"cluster": [0]}),
+            "model": object(),
+            "config": {"algorithm": "kmeans", "n_clusters": 2, "normalize": False},
+        }
+
+    monkeypatch.setattr(
+        sambalingo_baseline,
+        "generate_embeddings_from_corpus",
+        lambda **kwargs: pytest.fail("embedding generation should be skipped"),
+    )
+    monkeypatch.setattr(sambalingo_baseline, "run_clustering", fake_run_clustering)
+    monkeypatch.setattr(
+        sambalingo_baseline,
+        "write_cluster_summary_excel",
+        lambda results, output_path: str(output_path),
+    )
+    monkeypatch.setattr(
+        sambalingo_baseline,
+        "_write_scores",
+        lambda results, output_dir, label: (
+            str(output_dir / f"{label}_scores.csv"),
+            str(output_dir / f"{label}_scores.xlsx"),
+            [],
+        ),
+    )
+
+    result = sambalingo_baseline.run(
+        embeddings_path=saved_path,
+        algorithms=["KMeans"],
+        n_clusters=2,
+        output_dir=tmp_path,
+        projection_n_components=2,
+        projection_batch_size=4,
+        show_progress=False,
+    )
+
+    assert seen_shapes == [(8, 2)]
+    assert result["paths"]["embeddings"] == str(saved_path)
+    assert Path(result["paths"]["clustering_features"]).exists()

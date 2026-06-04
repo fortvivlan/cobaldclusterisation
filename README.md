@@ -104,6 +104,19 @@ rubert_baseline["paths"]
 CSV and Excel files at `rubert_baseline["paths"]["scores_csv"]` and
 `rubert_baseline["paths"]["scores_xlsx"]`.
 
+To rerun clustering from a saved embedding pickle without loading the model
+again, pass `embeddings_path`:
+
+```python
+rubert_baseline = run(
+    embeddings_path="/content/drive/MyDrive/cobald_outputs/rubert_tiny2_cobald.pkl",
+    hierarchy=paths.hierarchy_csv,
+    algorithms=["KMeans", "MiniBatchKMeans"],
+    n_clusters=[100, 200],
+    output_dir="/content",
+)
+```
+
 To include HDBSCAN in the complete-corpus run:
 
 ```python
@@ -189,6 +202,9 @@ embedding pickle. `sambalingo_baseline["paths"]["clustering_features"]` points
 to the reduced IncrementalPCA feature pickle used for clustering. The Excel
 summary, metric-row score CSV/XLSX, and per-run score text files are saved
 under `/content/`.
+
+Pass `embeddings_path` to skip SambaLingo embedding generation and rerun only
+projection, clustering, and exports from a saved full-embedding pickle.
 
 Agglomerative clustering is disabled above 50,000 rows unless explicitly
 overridden because it can require quadratic memory/time. To force it on the
@@ -284,6 +300,9 @@ summary, metric-row score CSV/XLSX, and per-run score text files are saved
 under `/content/`.
 Agglomerative clustering has the same full-corpus guard as the SambaLingo
 baseline.
+
+Pass `embeddings_path` to skip GigaChat3 embedding generation and rerun only
+projection, clustering, and exports from a saved full-embedding pickle.
 
 ## CLI Examples
 
