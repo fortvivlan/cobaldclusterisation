@@ -20,13 +20,13 @@ from .rubert_baseline import (
     DEFAULT_DRIVE_DIR,
     _write_scores,
     build_cluster_configs,
-    write_cluster_summary_excel,
 )
 from .sambalingo_baseline import (
     _guard_quadratic_algorithms,
     _release_cuda_memory,
     make_clustering_payload,
 )
+from .summary_excel import write_cluster_summary_excel
 
 
 MODEL_NAME = "ai-sage/GigaChat3-10B-A1.8B-base"

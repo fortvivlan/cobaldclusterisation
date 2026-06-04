@@ -24,8 +24,8 @@ from .rubert_baseline import (
     DEFAULT_DRIVE_DIR,
     _write_scores,
     build_cluster_configs,
-    write_cluster_summary_excel,
 )
+from .summary_excel import write_cluster_summary_excel
 
 
 MODEL_NAME = "sambanovasystems/SambaLingo-Russian-Base"

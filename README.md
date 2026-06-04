@@ -204,8 +204,8 @@ sambalingo_baseline = run(
 
 Cluster names are assigned by finding the actual token embedding closest to the
 cluster centroid in the clustering feature space. Summaries include token
-count, unique lemma count, frequent lemmas, frequent forms, all SEMCLASS labels
-found in the cluster, and example contexts. List fields use newline-separated
+count, unique lemma count, all lemmas with counts, frequent forms, SEMCLASS
+labels with counts, and example contexts. List fields use newline-separated
 values so they are readable as wrapped cells in Excel.
 
 To try another Hugging Face model in Colab, pass a different `model_name`.

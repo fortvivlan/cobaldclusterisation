@@ -59,8 +59,34 @@ def test_fit_evaluate_and_summarize_clusters() -> None:
     assert scores["semclass_exact_n_labeled"] == 4.0
     assert set(summary["token_count"]) == {2}
     assert set(summary["lemma_count"]) == {2}
-    assert set(summary["semclasses"]) == {"ANIMAL", "MONEY"}
-    assert "\n" in "\n".join(summary["top_lemmas"])
+    assert set(summary["semclasses"]) == {"ANIMAL: 2", "MONEY: 2"}
+    assert "\n" in "\n".join(summary["lemmas"])
+
+
+def test_summarize_clusters_lists_all_lemmas_but_limits_top_forms() -> None:
+    tokens = pd.DataFrame(
+        {
+            "FORM": ["форма1", "форма2", "форма3"],
+            "LEMMA": ["лемма1", "лемма2", "лемма3"],
+            "SEMCLASS": ["CLASS_A", "CLASS_A", "CLASS_B"],
+            "context_text": ["one", "two", "three"],
+        }
+    )
+    embeddings = np.array(
+        [
+            [0.0, 0.0],
+            [0.1, 0.0],
+            [0.2, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    summary = summarize_clusters(embeddings, [0, 0, 0], tokens, top_n=1)
+    row = summary.iloc[0]
+
+    assert row["lemmas"] == "лемма1: 1\nлемма2: 1\nлемма3: 1"
+    assert row["top_forms"] == "форма1: 1"
+    assert row["semclasses"] == "CLASS_A: 2\nCLASS_B: 1"
 
 
 def test_hierarchy_ancestor_labels() -> None:

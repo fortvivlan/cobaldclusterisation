@@ -330,17 +330,13 @@ def evaluate_clusters(
     return scores
 
 
-def _format_top_values(series: pd.Series, *, top_n: int) -> str:
+def _format_value_counts(series: pd.Series, *, top_n: int | None = None) -> str:
     values = series.astype(str)
     values = values[~values.isin(["", "_", "nan"])]
-    counts = values.value_counts().head(top_n)
+    counts = values.value_counts()
+    if top_n is not None:
+        counts = counts.head(top_n)
     return "\n".join(f"{value}: {count}" for value, count in counts.items())
-
-
-def _format_unique_values(series: pd.Series) -> str:
-    values = series.astype(str)
-    values = values[~values.isin(["", "_", "nan"])]
-    return "\n".join(sorted(values.unique()))
 
 
 def summarize_clusters(
@@ -397,9 +393,12 @@ def summarize_clusters(
                     .loc[lambda values: ~values.isin(["", "_", "nan"])]
                     .nunique()
                 ),
-                "top_lemmas": _format_top_values(cluster_tokens["LEMMA"], top_n=top_n),
-                "top_forms": _format_top_values(cluster_tokens["FORM"], top_n=top_n),
-                "semclasses": _format_unique_values(cluster_tokens["SEMCLASS"]),
+                "lemmas": _format_value_counts(cluster_tokens["LEMMA"]),
+                "top_forms": _format_value_counts(
+                    cluster_tokens["FORM"],
+                    top_n=top_n,
+                ),
+                "semclasses": _format_value_counts(cluster_tokens["SEMCLASS"]),
                 "examples": "\n".join(examples),
             }
         )
