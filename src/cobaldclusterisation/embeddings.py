@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from contextlib import contextmanager
+import logging
 from pathlib import Path
 import pickle
 import random
-from typing import Iterable, Sequence
+from typing import Iterable, Iterator, Sequence
 
 import numpy as np
 import pandas as pd
@@ -67,6 +69,76 @@ def _torch_dtype_from_name(torch: object, name: str | None) -> object | None:
         return getattr(torch, name)
     except AttributeError as exc:
         raise ValueError(f"Unknown torch dtype: {name}") from exc
+
+
+def _model_load_kwargs(
+    *,
+    trust_remote_code: bool,
+    dtype: object | None,
+) -> dict[str, object]:
+    kwargs: dict[str, object] = {"trust_remote_code": trust_remote_code}
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    return kwargs
+
+
+def _coerce_rope_parameter_floats(value: object) -> None:
+    """Coerce known RoPE config integers that recent Transformers wants as floats."""
+
+    if isinstance(value, dict):
+        for key in ("beta_fast", "beta_slow"):
+            item = value.get(key)
+            if isinstance(item, int) and not isinstance(item, bool):
+                value[key] = float(item)
+        for item in value.values():
+            _coerce_rope_parameter_floats(item)
+        return
+
+    for attr in ("rope_parameters", "rope_scaling"):
+        nested = getattr(value, attr, None)
+        if nested is not None:
+            _coerce_rope_parameter_floats(nested)
+
+
+class _RopeParameterTypeWarningFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not (
+            "`rope_parameters`'s beta_fast field must be a float" in message
+            or "`rope_parameters`'s beta_slow field must be a float" in message
+        )
+
+
+@contextmanager
+def _suppress_rope_parameter_type_warnings() -> Iterator[None]:
+    logger = logging.getLogger("transformers.modeling_rope_utils")
+    warning_filter = _RopeParameterTypeWarningFilter()
+    logger.addFilter(warning_filter)
+    try:
+        yield
+    finally:
+        logger.removeFilter(warning_filter)
+
+
+def _load_auto_model(
+    model_name: str,
+    *,
+    trust_remote_code: bool,
+    dtype: object | None,
+) -> object:
+    from transformers import AutoConfig, AutoModel
+
+    with _suppress_rope_parameter_type_warnings():
+        config = AutoConfig.from_pretrained(
+            model_name,
+            trust_remote_code=trust_remote_code,
+        )
+    _coerce_rope_parameter_floats(config)
+    return AutoModel.from_pretrained(
+        model_name,
+        config=config,
+        **_model_load_kwargs(trust_remote_code=trust_remote_code, dtype=dtype),
+    )
 
 
 def _resolve_device(torch: object, device: str | None) -> object:
@@ -139,7 +211,7 @@ def generate_token_embeddings(
     if config.batch_size < 1:
         raise ValueError("batch_size must be positive")
 
-    torch, AutoModel, AutoTokenizer = _require_transformers()
+    torch, _AutoModel, AutoTokenizer = _require_transformers()
     _set_seed(config.seed)
     device = _resolve_device(torch, config.device)
     dtype = _torch_dtype_from_name(torch, config.torch_dtype)
@@ -156,10 +228,11 @@ def generate_token_embeddings(
         )
     _ensure_padding_token(tokenizer)
 
-    model_kwargs: dict[str, object] = {"trust_remote_code": config.trust_remote_code}
-    if dtype is not None:
-        model_kwargs["torch_dtype"] = dtype
-    model = AutoModel.from_pretrained(config.model_name, **model_kwargs)
+    model = _load_auto_model(
+        config.model_name,
+        trust_remote_code=config.trust_remote_code,
+        dtype=dtype,
+    )
     if getattr(model.config, "pad_token_id", None) is None:
         model.config.pad_token_id = tokenizer.pad_token_id
     model.to(device)
@@ -231,7 +304,13 @@ def generate_token_embeddings(
                             "Increase max_length or inspect tokenization."
                         )
                     token_hidden = hidden[batch_index, piece_positions, :].mean(dim=0)
-                    vector = token_hidden.detach().cpu().numpy().astype(np.float32)
+                    vector = (
+                        token_hidden.detach()
+                        .to(dtype=torch.float32)
+                        .cpu()
+                        .numpy()
+                        .astype(np.float32)
+                    )
                     if config.normalize:
                         norm = np.linalg.norm(vector)
                         if norm > 0:

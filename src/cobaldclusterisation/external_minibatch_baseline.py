@@ -28,6 +28,7 @@ from .data import Sentence, Token, corpus_to_dataframe, load_corpus
 from .embeddings import (
     EmbeddingConfig,
     _ensure_padding_token,
+    _load_auto_model,
     _require_transformers,
     _resolve_device,
     _select_hidden_state,
@@ -106,7 +107,7 @@ class _TransformerEmbedder:
         if config.batch_size < 1:
             raise ValueError("batch_size must be positive")
 
-        torch, AutoModel, AutoTokenizer = _require_transformers()
+        torch, _AutoModel, AutoTokenizer = _require_transformers()
         _set_seed(config.seed)
         self.torch = torch
         self.config = config
@@ -125,10 +126,11 @@ class _TransformerEmbedder:
             )
         _ensure_padding_token(self.tokenizer)
 
-        model_kwargs: dict[str, object] = {"trust_remote_code": config.trust_remote_code}
-        if dtype is not None:
-            model_kwargs["torch_dtype"] = dtype
-        self.model = AutoModel.from_pretrained(config.model_name, **model_kwargs)
+        self.model = _load_auto_model(
+            config.model_name,
+            trust_remote_code=config.trust_remote_code,
+            dtype=dtype,
+        )
         if getattr(self.model.config, "pad_token_id", None) is None:
             self.model.config.pad_token_id = self.tokenizer.pad_token_id
         self.model.to(self.device)
@@ -188,7 +190,13 @@ class _TransformerEmbedder:
                             "Increase max_length or split contexts before embedding."
                         )
                     token_hidden = hidden[batch_index, piece_positions, :].mean(dim=0)
-                    vector = token_hidden.detach().cpu().numpy().astype(np.float32)
+                    vector = (
+                        token_hidden.detach()
+                        .to(dtype=self.torch.float32)
+                        .cpu()
+                        .numpy()
+                        .astype(np.float32)
+                    )
                     if self.config.normalize:
                         norm = np.linalg.norm(vector)
                         if norm > 0:
