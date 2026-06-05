@@ -7,7 +7,8 @@ from typing import Sequence
 
 import pandas as pd
 
-from .data import corpus_to_dataframe, load_corpus
+from .data import corpus_to_dataframe, load_corpus, load_semclass_hierarchy
+from .resources import resolve_hierarchy_path
 
 
 INVALID_SEMCLASS_VALUES = {"", "_", "nan", "None"}
@@ -27,6 +28,7 @@ def build_semclass_threshold_table(
     counts: pd.Series,
     *,
     max_occurrences: int = 15,
+    existing_semclass_count: int | None = None,
 ) -> pd.DataFrame:
     """Build a cumulative table of classes present at least N times."""
 
@@ -36,19 +38,27 @@ def build_semclass_threshold_table(
     rows: list[dict[str, object]] = []
     for minimum_occurrences in range(1, max_occurrences + 1):
         covered = counts[counts >= minimum_occurrences]
-        rows.append(
-            {
-                "minimum_occurrences": minimum_occurrences,
-                "description": (
-                    "total semantic classes"
-                    if minimum_occurrences == 1
-                    else f"semantic classes present at least {minimum_occurrences} times"
-                ),
-                "semclass_count": int(len(covered)),
-                "labeled_token_count": int(covered.sum()),
-            }
-        )
+        row: dict[str, object] = {
+            "minimum_occurrences": minimum_occurrences,
+            "description": (
+                "semantic classes observed at least 1 time"
+                if minimum_occurrences == 1
+                else f"semantic classes present at least {minimum_occurrences} times"
+            ),
+            "semclass_count": int(len(covered)),
+            "labeled_token_count": int(covered.sum()),
+        }
+        if existing_semclass_count is not None:
+            row["existing_semclass_count"] = existing_semclass_count
+        rows.append(row)
     return pd.DataFrame(rows)
+
+
+def hierarchy_semclass_count(hierarchy: str | Path) -> int:
+    """Return the number of semantic classes listed in the hierarchy CSV."""
+
+    hierarchy_df = load_semclass_hierarchy(resolve_hierarchy_path(hierarchy))
+    return int(hierarchy_df["class_id"].nunique())
 
 
 def semclass_threshold_table_from_corpus(
@@ -56,6 +66,7 @@ def semclass_threshold_table_from_corpus(
     *,
     splits: Sequence[str] = ("train", "dev"),
     max_occurrences: int = 15,
+    hierarchy: str | Path | None = None,
 ) -> pd.DataFrame:
     """Load CoBaLD splits and build the SEMCLASS threshold table."""
 
@@ -65,9 +76,13 @@ def semclass_threshold_table_from_corpus(
         include_punctuation=False,
         include_empty=False,
     )
+    existing_semclass_count = (
+        hierarchy_semclass_count(hierarchy) if hierarchy is not None else None
+    )
     return build_semclass_threshold_table(
         semclass_counts(tokens),
         max_occurrences=max_occurrences,
+        existing_semclass_count=existing_semclass_count,
     )
 
 

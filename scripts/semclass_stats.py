@@ -25,6 +25,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument("--data-dir", default="CobaldRus")
+    parser.add_argument(
+        "--hierarchy",
+        default="semantic-hierarchy/hyperonims_hierarchy.csv",
+        help=(
+            "Path to hyperonims_hierarchy.csv or to a cloned semantic-hierarchy "
+            "repository directory."
+        ),
+    )
     parser.add_argument("--splits", default="train,dev")
     parser.add_argument("--max-occurrences", type=int, default=15)
     parser.add_argument(
@@ -40,6 +48,7 @@ def main(argv: list[str] | None = None) -> None:
         args.data_dir,
         splits=_parse_splits(args.splits),
         max_occurrences=args.max_occurrences,
+        hierarchy=args.hierarchy,
     )
 
     if args.output is None:

@@ -24,29 +24,31 @@ have 12 columns: `ID`, `FORM`, `LEMMA`, `UPOS`, `XPOS`, `FEATS`, `HEAD`,
 The table below counts valid `SEMCLASS` labels among surface non-punctuation
 tokens in `CobaldRus/train.conllu` and `CobaldRus/dev.conllu`. It is
 cumulative: row `N` counts semantic classes represented by at least `N`
-labelled target tokens. Regenerate it with:
+labelled target tokens. The `existing_semclass_count` column is the total number
+of semantic classes listed in `semantic-hierarchy/hyperonims_hierarchy.csv`.
+Regenerate it with:
 
 ```bash
-python scripts/semclass_stats.py --data-dir CobaldRus --splits train,dev --max-occurrences 15
+python scripts/semclass_stats.py --data-dir CobaldRus --hierarchy semantic-hierarchy/hyperonims_hierarchy.csv --splits train,dev --max-occurrences 15
 ```
 
-| minimum_occurrences | description                                | semclass_count | labeled_token_count |
-| ------------------- | ------------------------------------------ | -------------- | ------------------- |
-| 1                   | total semantic classes                     | 565            | 362892              |
-| 2                   | semantic classes present at least 2 times  | 541            | 362868              |
-| 3                   | semantic classes present at least 3 times  | 521            | 362828              |
-| 4                   | semantic classes present at least 4 times  | 512            | 362801              |
-| 5                   | semantic classes present at least 5 times  | 496            | 362737              |
-| 6                   | semantic classes present at least 6 times  | 488            | 362697              |
-| 7                   | semantic classes present at least 7 times  | 476            | 362625              |
-| 8                   | semantic classes present at least 8 times  | 468            | 362569              |
-| 9                   | semantic classes present at least 9 times  | 461            | 362513              |
-| 10                  | semantic classes present at least 10 times | 452            | 362432              |
-| 11                  | semantic classes present at least 11 times | 444            | 362352              |
-| 12                  | semantic classes present at least 12 times | 435            | 362253              |
-| 13                  | semantic classes present at least 13 times | 431            | 362205              |
-| 14                  | semantic classes present at least 14 times | 427            | 362153              |
-| 15                  | semantic classes present at least 15 times | 422            | 362083              |
+| minimum_occurrences | description                                | semclass_count | labeled_token_count | existing_semclass_count |
+| ------------------- | ------------------------------------------ | -------------- | ------------------- | ----------------------- |
+| 1                   | semantic classes observed at least 1 time  | 565            | 362892              | 660                     |
+| 2                   | semantic classes present at least 2 times  | 541            | 362868              | 660                     |
+| 3                   | semantic classes present at least 3 times  | 521            | 362828              | 660                     |
+| 4                   | semantic classes present at least 4 times  | 512            | 362801              | 660                     |
+| 5                   | semantic classes present at least 5 times  | 496            | 362737              | 660                     |
+| 6                   | semantic classes present at least 6 times  | 488            | 362697              | 660                     |
+| 7                   | semantic classes present at least 7 times  | 476            | 362625              | 660                     |
+| 8                   | semantic classes present at least 8 times  | 468            | 362569              | 660                     |
+| 9                   | semantic classes present at least 9 times  | 461            | 362513              | 660                     |
+| 10                  | semantic classes present at least 10 times | 452            | 362432              | 660                     |
+| 11                  | semantic classes present at least 11 times | 444            | 362352              | 660                     |
+| 12                  | semantic classes present at least 12 times | 435            | 362253              | 660                     |
+| 13                  | semantic classes present at least 13 times | 431            | 362205              | 660                     |
+| 14                  | semantic classes present at least 14 times | 427            | 362153              | 660                     |
+| 15                  | semantic classes present at least 15 times | 422            | 362083              | 660                     |
 
 ## Colab Workflow 1: ruBERT Baseline
 
