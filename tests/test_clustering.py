@@ -2,15 +2,19 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from cobaldclusterisation.clustering import (
     ClusterConfig,
     evaluate_clusters,
     fit_predict_clusters,
+    hierarchy_alignment_table,
     hierarchy_ancestor_labels,
+    infer_semclass_cluster_count,
     run_clustering_suite,
     summarize_clusters,
 )
+from cobaldclusterisation.data import corpus_to_dataframe, load_corpus
 from cobaldclusterisation.rubert_baseline import (
     build_cluster_configs,
     format_score_table,
@@ -66,6 +70,61 @@ def test_fit_evaluate_and_summarize_clusters() -> None:
     assert "\n" in "\n".join(summary["lemmas"])
 
 
+def test_fit_predict_supports_scalable_sklearn_algorithms() -> None:
+    embeddings = np.array(
+        [
+            [0.0, 0.0],
+            [0.1, 0.0],
+            [5.0, 5.0],
+            [5.2, 5.0],
+        ],
+        dtype=np.float32,
+    )
+
+    for algorithm in ("bisecting_kmeans", "birch"):
+        labels, _ = fit_predict_clusters(
+            embeddings,
+            config=ClusterConfig(
+                algorithm=algorithm,
+                n_clusters=2,
+                normalize=False,
+                random_state=0,
+                n_init=1,
+            ),
+        )
+
+        assert labels.shape == (4,)
+        assert len(set(labels.tolist())) == 2
+
+
+def test_fit_predict_knn_leiden_optional_graph_backend() -> None:
+    pytest.importorskip("igraph")
+    pytest.importorskip("leidenalg")
+    pytest.importorskip("pynndescent")
+    embeddings = np.array(
+        [
+            [0.0, 0.0],
+            [0.1, 0.0],
+            [5.0, 5.0],
+            [5.2, 5.0],
+        ],
+        dtype=np.float32,
+    )
+
+    labels, _ = fit_predict_clusters(
+        embeddings,
+        config=ClusterConfig(
+            algorithm="knn_leiden",
+            normalize=False,
+            metric="euclidean",
+            graph_n_neighbors=2,
+            random_state=0,
+        ),
+    )
+
+    assert labels.shape == (4,)
+
+
 def test_summarize_clusters_lists_all_lemmas_but_limits_top_forms() -> None:
     tokens = pd.DataFrame(
         {
@@ -105,6 +164,44 @@ def test_hierarchy_ancestor_labels() -> None:
     labels = hierarchy_ancestor_labels(["ANIMAL", "MONEY", "_"], hierarchy, depth=1)
 
     assert labels.tolist() == ["ENTITY", "ENTITY", "_"]
+
+
+def test_hierarchy_alignment_table_reports_best_label_per_depth() -> None:
+    hierarchy = pd.DataFrame(
+        [
+            {"class_id": "1", "parent_id": None, "depth": 0, "class_name": "ROOT"},
+            {"class_id": "2", "parent_id": "1", "depth": 1, "class_name": "ENTITY"},
+            {"class_id": "3", "parent_id": "2", "depth": 2, "class_name": "ANIMAL"},
+            {"class_id": "4", "parent_id": "2", "depth": 2, "class_name": "MONEY"},
+        ]
+    )
+    labels = np.array([0, 0, 1, 1], dtype=np.int64)
+
+    alignment = hierarchy_alignment_table(
+        labels,
+        _tokens(),
+        hierarchy,
+        hierarchy_depths=(1, 2),
+    )
+
+    animal_row = alignment[
+        (alignment["depth"] == 2) & (alignment["cluster"] == 0)
+    ].iloc[0]
+    assert animal_row["best_label"] == "ANIMAL"
+    assert animal_row["best_label_count"] == 2
+    assert animal_row["cluster_purity"] == 1.0
+    assert animal_row["gold_label_coverage"] == 1.0
+
+
+def test_infer_semclass_cluster_count_from_bundled_corpus() -> None:
+    sentences = load_corpus("CobaldRus", splits=("train", "dev"))
+    tokens = corpus_to_dataframe(
+        sentences,
+        include_punctuation=False,
+        include_empty=False,
+    )
+
+    assert infer_semclass_cluster_count(tokens) == 565
 
 
 def test_run_clustering_suite_accepts_progress_flag() -> None:
@@ -155,6 +252,24 @@ def test_rubert_baseline_builds_colab_friendly_configs() -> None:
     assert [config.n_clusters for config in configs[:4]] == [50, 100, 50, 100]
     assert configs[-1].min_cluster_size == 25
     assert configs[-1].n_jobs == -1
+
+
+def test_rubert_baseline_builds_new_default_configs() -> None:
+    configs = build_cluster_configs(
+        tokens=_tokens(),
+        n_clusters="data_semclass",
+        graph_n_neighbors=12,
+    )
+
+    assert [config.algorithm for config in configs] == [
+        "bisecting_kmeans",
+        "birch",
+        "knn_leiden",
+    ]
+    assert configs[0].n_clusters == 2
+    assert configs[1].n_clusters == 2
+    assert configs[2].graph_n_neighbors == 12
+    assert configs[2].metric == "cosine"
 
 
 def test_rubert_baseline_formats_score_table() -> None:

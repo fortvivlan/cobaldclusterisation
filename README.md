@@ -29,7 +29,7 @@ writes an Excel workbook with cluster summaries under `/content/`.
 ```python
 !git clone https://github.com/fortvivlan/cobaldclusterisation.git
 %cd cobaldclusterisation
-!pip install -e ".[embeddings]" openpyxl
+!pip install -e ".[embeddings,graph]" openpyxl
 !pip install -U scikit-learn
 ```
 
@@ -73,9 +73,12 @@ The default embedding target policy is surface non-punctuation tokens only.
 Decimal-ID ellipsis rows such as `2.1 #NULL` are parsed but are not embedding
 targets.
 
-Run the full ruBERT baseline. Algorithm names are case-insensitive; supported
-values are `KMeans`, `MiniBatchKMeans`, `Agglomerative`, and `HDBSCAN`. The
-pipeline does not sample before clustering.
+Run the full ruBERT baseline. Algorithm names are case-insensitive. The
+scalable defaults are `BisectingKMeans`, `BIRCH`, and `KNNLeiden`; legacy
+options remain available by explicit request: `KMeans`, `MiniBatchKMeans`,
+`Agglomerative`, and `HDBSCAN`. The pipeline does not sample before clustering.
+By default, count-based algorithms use the number of SEMCLASS labels actually
+present in the data (`data_semclass`; 565 for the bundled train+dev corpus).
 
 ```python
 from cobaldclusterisation.rubert_baseline import run
@@ -83,8 +86,6 @@ from cobaldclusterisation.rubert_baseline import run
 rubert_baseline = run(
     data_dir=paths.corpus_dir,
     hierarchy=paths.hierarchy_csv,
-    algorithms=["KMeans", "MiniBatchKMeans"],
-    n_clusters=100,
     output_dir="/content",
     save_embeddings_to_drive=True,
     drive_dir="/content/drive/MyDrive/cobald_outputs",
@@ -102,7 +103,8 @@ rubert_baseline["paths"]
 `/content/`. Score tables are printed and also saved as `.txt` files listed in
 `rubert_baseline["paths"]["scores_txt"]`. Metric-row score tables are saved as
 CSV and Excel files at `rubert_baseline["paths"]["scores_csv"]` and
-`rubert_baseline["paths"]["scores_xlsx"]`.
+`rubert_baseline["paths"]["scores_xlsx"]`. Per-cluster hierarchy alignment
+tables are saved at `rubert_baseline["paths"]["hierarchy_alignment_excel"]`.
 
 To rerun clustering from a saved embedding pickle without loading the model
 again, pass `embeddings_path`:
@@ -111,20 +113,20 @@ again, pass `embeddings_path`:
 rubert_baseline = run(
     embeddings_path="/content/drive/MyDrive/cobald_outputs/rubert_tiny2_cobald.pkl",
     hierarchy=paths.hierarchy_csv,
-    algorithms=["KMeans", "MiniBatchKMeans"],
-    n_clusters=[100, 200],
+    algorithms=["BisectingKMeans", "BIRCH", "KNNLeiden"],
+    n_clusters="data_semclass",
     output_dir="/content",
 )
 ```
 
-To include HDBSCAN in the complete-corpus run:
+To run a legacy comparison, request the older algorithms explicitly:
 
 ```python
 rubert_baseline = run(
     data_dir=paths.corpus_dir,
     hierarchy=paths.hierarchy_csv,
-    algorithms=["KMeans", "MiniBatchKMeans", "HDBSCAN"],
-    n_clusters=100,
+    algorithms=["MiniBatchKMeans", "HDBSCAN"],
+    n_clusters="data_semclass",
     min_cluster_size=25,
     min_samples=10,
     hdbscan_n_jobs=-1,
@@ -138,8 +140,8 @@ removed from transformer contexts. The target token count stays the same.
 rubert_no_punct = run(
     data_dir=paths.corpus_dir,
     hierarchy=paths.hierarchy_csv,
-    algorithms=["MiniBatchKMeans"],
-    n_clusters=100,
+    algorithms=["BIRCH"],
+    n_clusters="data_semclass",
     output_dir="/content",
     embedding_filename="rubert_tiny2_cobald_no_punct_context.pkl",
     excel_filename="rubert_tiny2_no_punct_cluster_summaries.xlsx",
@@ -179,8 +181,6 @@ from cobaldclusterisation.sambalingo_baseline import run
 sambalingo_baseline = run(
     data_dir=paths.corpus_dir,
     hierarchy=paths.hierarchy_csv,
-    algorithms=["KMeans", "MiniBatchKMeans", "HDBSCAN"],
-    n_clusters=100,
     output_dir="/content",
     save_embeddings_to_drive=True,
     drive_dir="/content/drive/MyDrive/cobald_outputs",
@@ -274,8 +274,6 @@ from cobaldclusterisation.gigachat_baseline import run
 gigachat_baseline = run(
     data_dir=paths.corpus_dir,
     hierarchy=paths.hierarchy_csv,
-    algorithms=["KMeans", "MiniBatchKMeans", "HDBSCAN"],
-    n_clusters=100,
     output_dir="/content",
     save_embeddings_to_drive=True,
     drive_dir="/content/drive/MyDrive/cobald_outputs",
@@ -328,12 +326,12 @@ cobald embed \
 
 cobald cluster outputs/embeddings/rubert_tiny2.pkl \
   --hierarchy semantic-hierarchy \
-  --algorithms minibatch_kmeans \
-  --n-clusters 100 \
-  --output outputs/clusters/minibatch_k100.pkl
+  --algorithms bisecting_kmeans birch knn_leiden \
+  --n-clusters data_semclass \
+  --output outputs/clusters/scalable_defaults.pkl
 ```
 
 The clustering CLI shows progress by default. Add `--no-progress` for quieter
-batch runs.
+batch runs. kNN graph clustering requires the optional `graph` extra.
 
 Generated outputs under `outputs/` and pickle files are ignored by Git.

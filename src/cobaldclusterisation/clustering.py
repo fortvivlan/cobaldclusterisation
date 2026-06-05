@@ -9,7 +9,13 @@ from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
-from sklearn.cluster import AgglomerativeClustering, KMeans, MiniBatchKMeans
+from sklearn.cluster import (
+    AgglomerativeClustering,
+    Birch,
+    BisectingKMeans,
+    KMeans,
+    MiniBatchKMeans,
+)
 from sklearn.metrics import (
     adjusted_rand_score,
     calinski_harabasz_score,
@@ -46,6 +52,11 @@ class ClusterConfig:
     n_jobs: int | None = None
     linkage: str = "ward"
     metric: str = "euclidean"
+    birch_threshold: float = 0.75
+    birch_branching_factor: int = 100
+    bisecting_strategy: str = "biggest_inertia"
+    graph_n_neighbors: int = 15
+    graph_resolution: float = 1.0
 
 
 def _require_hdbscan() -> object:
@@ -59,6 +70,19 @@ def _require_hdbscan() -> object:
     return HDBSCAN
 
 
+def _require_graph_dependencies() -> tuple[object, object, object]:
+    try:
+        import igraph as ig
+        import leidenalg
+        import pynndescent
+    except ImportError as exc:
+        raise ImportError(
+            "kNN graph clustering requires optional graph dependencies. "
+            'In Colab, install them with: pip install -e ".[graph]"'
+        ) from exc
+    return ig, leidenalg, pynndescent
+
+
 def _as_float_matrix(embeddings: np.ndarray, *, normalize: bool) -> np.ndarray:
     matrix = np.asarray(embeddings, dtype=np.float32)
     if matrix.ndim != 2:
@@ -66,6 +90,73 @@ def _as_float_matrix(embeddings: np.ndarray, *, normalize: bool) -> np.ndarray:
     if normalize:
         matrix = l2_normalize(matrix)
     return matrix
+
+
+def _graph_edge_weight(distance: float, *, metric: str) -> float:
+    if metric == "cosine":
+        return max(0.0, 1.0 - distance)
+    return 1.0 / (1.0 + max(0.0, distance))
+
+
+def _fit_predict_knn_graph(
+    matrix: np.ndarray,
+    *,
+    config: ClusterConfig,
+    method: str,
+) -> tuple[np.ndarray, object]:
+    ig, leidenalg, pynndescent = _require_graph_dependencies()
+    if config.graph_n_neighbors < 1:
+        raise ValueError("graph_n_neighbors must be positive")
+
+    index = pynndescent.NNDescent(
+        matrix,
+        n_neighbors=config.graph_n_neighbors + 1,
+        metric=config.metric,
+        random_state=config.random_state,
+        n_jobs=config.n_jobs,
+    )
+    neighbor_indices, neighbor_distances = index.neighbor_graph
+
+    edges: list[tuple[int, int]] = []
+    weights: list[float] = []
+    for source, (targets, distances) in enumerate(
+        zip(neighbor_indices, neighbor_distances, strict=True)
+    ):
+        for target, distance in zip(targets, distances, strict=True):
+            target = int(target)
+            if source == target:
+                continue
+            edges.append((source, target))
+            weights.append(_graph_edge_weight(float(distance), metric=config.metric))
+
+    graph = ig.Graph(n=len(matrix), edges=edges, directed=False)
+    graph.es["weight"] = weights
+    graph.simplify(combine_edges={"weight": "max"})
+    if method == "knn_leiden":
+        partition = leidenalg.find_partition(
+            graph,
+            leidenalg.RBConfigurationVertexPartition,
+            weights="weight",
+            resolution_parameter=config.graph_resolution,
+            seed=config.random_state,
+        )
+        labels = np.asarray(partition.membership, dtype=np.int64)
+    elif method == "knn_louvain":
+        partition = graph.community_multilevel(weights="weight")
+        labels = np.asarray(partition.membership, dtype=np.int64)
+    else:
+        raise ValueError(f"Unknown graph community method: {method}")
+
+    model = {
+        "algorithm": method,
+        "n_neighbors": config.graph_n_neighbors,
+        "metric": config.metric,
+        "resolution": config.graph_resolution,
+        "n_vertices": graph.vcount(),
+        "n_edges": graph.ecount(),
+        "n_communities": int(len(np.unique(labels))),
+    }
+    return labels, model
 
 
 def fit_predict_clusters(
@@ -92,6 +183,20 @@ def fit_predict_clusters(
             batch_size=config.batch_size,
             n_init=config.n_init,
         )
+    elif algorithm == "bisecting_kmeans":
+        model = BisectingKMeans(
+            n_clusters=config.n_clusters,
+            random_state=config.random_state,
+            n_init=config.n_init,
+            bisecting_strategy=config.bisecting_strategy,
+        )
+    elif algorithm == "birch":
+        model = Birch(
+            threshold=config.birch_threshold,
+            branching_factor=config.birch_branching_factor,
+            n_clusters=config.n_clusters,
+            compute_labels=True,
+        )
     elif algorithm == "agglomerative":
         kwargs: dict[str, object] = {
             "n_clusters": config.n_clusters,
@@ -111,10 +216,13 @@ def fit_predict_clusters(
             n_jobs=config.n_jobs,
             metric=config.metric,
         )
+    elif algorithm in {"knn_leiden", "knn_louvain"}:
+        return _fit_predict_knn_graph(matrix, config=config, method=algorithm)
     else:
         raise ValueError(
             "Unknown algorithm. Use one of: kmeans, minibatch_kmeans, "
-            "agglomerative, hdbscan."
+            "bisecting_kmeans, birch, agglomerative, hdbscan, "
+            "knn_leiden, knn_louvain."
         )
 
     labels = model.fit_predict(matrix)
@@ -123,7 +231,7 @@ def fit_predict_clusters(
 
 def default_cluster_configs(
     *,
-    n_clusters: Sequence[int] = (50, 100, 200),
+    n_clusters: Sequence[int] = (565,),
     random_state: int = 42,
 ) -> list[ClusterConfig]:
     """Return scalable default clustering configurations for the full corpus."""
@@ -132,18 +240,26 @@ def default_cluster_configs(
     for k in n_clusters:
         configs.append(
             ClusterConfig(
-                algorithm="minibatch_kmeans",
+                algorithm="bisecting_kmeans",
                 n_clusters=k,
                 random_state=random_state,
+                n_init=1,
             )
         )
         configs.append(
             ClusterConfig(
-                algorithm="kmeans",
+                algorithm="birch",
                 n_clusters=k,
                 random_state=random_state,
             )
         )
+    configs.append(
+        ClusterConfig(
+            algorithm="knn_leiden",
+            random_state=random_state,
+            metric="cosine",
+        )
+    )
     return configs
 
 
@@ -160,7 +276,9 @@ def purity_score(y_true: Sequence[object], y_pred: Sequence[object]) -> float:
 
 def _valid_semclass_mask(values: Sequence[object]) -> np.ndarray:
     series = pd.Series(values)
-    return series.notna().to_numpy() & ~series.astype(str).isin(["", "_"]).to_numpy()
+    return series.notna().to_numpy() & ~series.astype(str).isin(
+        ["", "_", "nan", "None"]
+    ).to_numpy()
 
 
 def _external_scores(
@@ -276,6 +394,97 @@ def hierarchy_ancestor_labels(
     return np.asarray([ancestor_name(label) for label in semclasses], dtype=object)
 
 
+def _load_hierarchy_frame(
+    hierarchy: pd.DataFrame | str | Path,
+) -> pd.DataFrame:
+    return (
+        load_semclass_hierarchy(resolve_hierarchy_path(hierarchy))
+        if isinstance(hierarchy, (str, Path))
+        else hierarchy
+    )
+
+
+def infer_semclass_cluster_count(tokens: pd.DataFrame) -> int:
+    """Infer a leaf-level cluster count from SEMCLASS labels present in data."""
+
+    if "SEMCLASS" not in tokens.columns:
+        raise ValueError("Cannot infer clusters: tokens has no SEMCLASS column")
+    semclasses = tokens["SEMCLASS"].astype(str)
+    valid = semclasses[~semclasses.isin(["", "_", "nan"])]
+    n_classes = int(valid.nunique())
+    if n_classes < 1:
+        raise ValueError("Cannot infer clusters: no usable SEMCLASS labels found")
+    return n_classes
+
+
+def hierarchy_alignment_table(
+    labels: Sequence[int],
+    tokens: pd.DataFrame,
+    hierarchy: pd.DataFrame | str | Path,
+    *,
+    hierarchy_depths: Sequence[int] = (1, 2, 3, 4, 5, 6, 7),
+) -> pd.DataFrame:
+    """Summarize how each cluster aligns to hierarchy labels at each depth."""
+
+    labels_array = np.asarray(labels, dtype=np.int64)
+    if len(labels_array) != len(tokens):
+        raise ValueError("labels and tokens must have the same length")
+    if "SEMCLASS" not in tokens.columns:
+        raise ValueError("tokens must contain a SEMCLASS column")
+
+    hierarchy_df = _load_hierarchy_frame(hierarchy)
+    semclasses = tokens["SEMCLASS"].astype(str).to_numpy()
+    rows: list[dict[str, object]] = []
+    cluster_labels = sorted(
+        np.unique(labels_array),
+        key=lambda label: (label == -1, int(label)),
+    )
+
+    for depth in hierarchy_depths:
+        depth_labels = hierarchy_ancestor_labels(semclasses, hierarchy_df, depth=depth)
+        valid_mask = _valid_semclass_mask(depth_labels)
+        depth_counts = pd.Series(depth_labels[valid_mask]).value_counts()
+        for cluster_label in cluster_labels:
+            cluster_mask = labels_array == cluster_label
+            cluster_valid_mask = cluster_mask & valid_mask
+            cluster_size = int(cluster_mask.sum())
+            labeled_size = int(cluster_valid_mask.sum())
+            if labeled_size == 0:
+                rows.append(
+                    {
+                        "depth": int(depth),
+                        "cluster": int(cluster_label),
+                        "cluster_token_count": cluster_size,
+                        "cluster_labeled_count": 0,
+                        "best_label": "",
+                        "best_label_count": 0,
+                        "cluster_purity": float("nan"),
+                        "gold_label_coverage": float("nan"),
+                    }
+                )
+                continue
+
+            cluster_counts = pd.Series(depth_labels[cluster_valid_mask]).value_counts()
+            best_label = str(cluster_counts.index[0])
+            best_count = int(cluster_counts.iloc[0])
+            gold_count = int(depth_counts.get(best_label, 0))
+            rows.append(
+                {
+                    "depth": int(depth),
+                    "cluster": int(cluster_label),
+                    "cluster_token_count": cluster_size,
+                    "cluster_labeled_count": labeled_size,
+                    "best_label": best_label,
+                    "best_label_count": best_count,
+                    "cluster_purity": best_count / labeled_size,
+                    "gold_label_coverage": (
+                        best_count / gold_count if gold_count else float("nan")
+                    ),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def evaluate_clusters(
     embeddings: np.ndarray,
     labels: Sequence[int],
@@ -309,11 +518,7 @@ def evaluate_clusters(
     scores.update(_external_scores(semclasses, labels_array, prefix="semclass_exact"))
 
     if hierarchy is not None:
-        hierarchy_df = (
-            load_semclass_hierarchy(resolve_hierarchy_path(hierarchy))
-            if isinstance(hierarchy, (str, Path))
-            else hierarchy
-        )
+        hierarchy_df = _load_hierarchy_frame(hierarchy)
         for depth in hierarchy_depths:
             ancestor_labels = hierarchy_ancestor_labels(
                 semclasses,
@@ -444,12 +649,23 @@ def run_clustering(
         progress.update(1)
         summary = summarize_clusters(matrix, labels, tokens)
         progress.update(1)
+        hierarchy_alignment = (
+            hierarchy_alignment_table(
+                labels,
+                tokens,
+                hierarchy,
+                hierarchy_depths=hierarchy_depths,
+            )
+            if hierarchy is not None and "SEMCLASS" in tokens.columns
+            else pd.DataFrame()
+        )
     finally:
         progress.close()
     return {
         "labels": labels,
         "scores": scores,
         "summary": summary,
+        "hierarchy_alignment": hierarchy_alignment,
         "model": model,
         "config": asdict(config),
     }

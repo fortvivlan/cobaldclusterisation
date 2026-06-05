@@ -26,7 +26,7 @@ from .rubert_baseline import (
     build_cluster_configs,
 )
 from .scores import write_scores as _write_scores
-from .summary_excel import write_cluster_summary_excel
+from .summary_excel import write_cluster_summary_excel, write_hierarchy_alignment_excel
 
 
 MODEL_NAME = "sambanovasystems/SambaLingo-Russian-Base"
@@ -39,6 +39,7 @@ class SambaLingoBaselinePaths:
     embeddings: str
     clustering_features: str
     excel: str
+    hierarchy_alignment_excel: str
     scores_csv: str
     scores_xlsx: str
     scores_txt: list[str]
@@ -187,8 +188,8 @@ def run(
     data_dir: str | Path = "CobaldRus",
     hierarchy: str | Path | pd.DataFrame | None = "hyperonims_hierarchy.csv",
     splits: Sequence[str] = ("train", "dev"),
-    algorithms: Sequence[str] = ("KMeans", "MiniBatchKMeans", "HDBSCAN"),
-    n_clusters: int | Sequence[int] = 100,
+    algorithms: Sequence[str] = ("BisectingKMeans", "BIRCH", "KNNLeiden"),
+    n_clusters: int | str | Sequence[int] = "data_semclass",
     output_dir: str | Path = DEFAULT_COLAB_DIR,
     save_embeddings_to_drive: bool = False,
     drive_dir: str | Path = DEFAULT_DRIVE_DIR,
@@ -196,6 +197,7 @@ def run(
     embeddings_path: str | Path | None = None,
     clustering_features_filename: str | None = None,
     excel_filename: str = "sambalingo_russian_base_cluster_summaries.xlsx",
+    hierarchy_alignment_filename: str = "sambalingo_russian_base_hierarchy_alignment.xlsx",
     label: str = "sambalingo_russian_base",
     embedding_batch_size: int = 1,
     clustering_batch_size: int = 4096,
@@ -210,7 +212,7 @@ def run(
     projection_batch_size: int = 8192,
     normalize_projection_input: bool = True,
     normalize_projection_output: bool = True,
-    n_init: int = 5,
+    n_init: int = 1,
     min_samples: int = 10,
     min_cluster_size: int = 25,
     hdbscan_cluster_selection_epsilon: float = 0.0,
@@ -218,7 +220,14 @@ def run(
     hdbscan_allow_single_cluster: bool = False,
     hdbscan_n_jobs: int | None = -1,
     metric: str = "euclidean",
-    hierarchy_depths: Sequence[int] = (1, 2, 3),
+    birch_threshold: float = 0.75,
+    birch_branching_factor: int = 100,
+    bisecting_strategy: str = "biggest_inertia",
+    graph_n_neighbors: int = 15,
+    graph_resolution: float = 1.0,
+    graph_metric: str = "cosine",
+    graph_n_jobs: int | None = -1,
+    hierarchy_depths: Sequence[int] = (1, 2, 3, 4, 5, 6, 7),
     agglomerative_max_rows: int = 50_000,
     allow_quadratic_algorithms: bool = False,
     release_cuda_after_embeddings: bool = True,
@@ -289,6 +298,7 @@ def run(
     configs = build_cluster_configs(
         algorithms=algorithms,
         n_clusters=n_clusters,
+        tokens=clustering_payload["tokens"],
         random_state=seed,
         normalize=normalize_for_clustering,
         batch_size=clustering_batch_size,
@@ -300,6 +310,13 @@ def run(
         hdbscan_allow_single_cluster=hdbscan_allow_single_cluster,
         hdbscan_n_jobs=hdbscan_n_jobs,
         metric=metric,
+        birch_threshold=birch_threshold,
+        birch_branching_factor=birch_branching_factor,
+        bisecting_strategy=bisecting_strategy,
+        graph_n_neighbors=graph_n_neighbors,
+        graph_resolution=graph_resolution,
+        graph_metric=graph_metric,
+        graph_n_jobs=graph_n_jobs,
     )
     _guard_quadratic_algorithms(
         configs,
@@ -324,6 +341,10 @@ def run(
         )
 
     excel_path = write_cluster_summary_excel(results, output_dir / excel_filename)
+    hierarchy_alignment_path = write_hierarchy_alignment_excel(
+        results,
+        output_dir / hierarchy_alignment_filename,
+    )
     scores_csv, scores_xlsx, scores_txt = _write_scores(
         results,
         output_dir=output_dir,
@@ -334,6 +355,7 @@ def run(
         embeddings=str(payload["saved_path"]),
         clustering_features=str(clustering_features_path),
         excel=excel_path,
+        hierarchy_alignment_excel=hierarchy_alignment_path,
         scores_csv=scores_csv,
         scores_xlsx=scores_xlsx,
         scores_txt=scores_txt,

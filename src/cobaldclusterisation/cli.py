@@ -8,13 +8,17 @@ from pathlib import Path
 import pandas as pd
 
 from .clustering import (
-    ClusterConfig,
     run_clustering_suite,
     save_clustering_results,
     scores_to_dataframe,
 )
 from .data import corpus_to_dataframe, load_corpus
-from .embeddings import EmbeddingConfig, generate_embeddings_from_corpus
+from .embeddings import (
+    EmbeddingConfig,
+    generate_embeddings_from_corpus,
+    load_embeddings_pickle,
+)
+from .rubert_baseline import build_cluster_configs
 
 
 def _parse_splits(value: str) -> tuple[str, ...]:
@@ -65,40 +69,44 @@ def _cmd_embed(args: argparse.Namespace) -> None:
     print(f"saved={payload['saved_path']}")
 
 
-def _cluster_configs(args: argparse.Namespace) -> list[ClusterConfig]:
-    configs: list[ClusterConfig] = []
-    for algorithm in args.algorithms:
-        if algorithm == "hdbscan":
-            configs.append(
-                ClusterConfig(
-                    algorithm=algorithm,
-                    min_samples=args.min_samples,
-                    min_cluster_size=args.min_cluster_size,
-                    random_state=args.seed,
-                    normalize=args.normalize,
-                    metric=args.metric,
-                )
-            )
-            continue
-        for n_clusters in args.n_clusters:
-            configs.append(
-                ClusterConfig(
-                    algorithm=algorithm,
-                    n_clusters=n_clusters,
-                    random_state=args.seed,
-                    normalize=args.normalize,
-                    batch_size=args.batch_size,
-                    metric=args.metric,
-                )
-            )
-    return configs
+def _parse_n_clusters(values: list[str]) -> int | str | list[int]:
+    if len(values) == 1:
+        value = values[0]
+        if value == "data_semclass":
+            return value
+        return int(value)
+    return [int(value) for value in values]
+
+
+def _cluster_configs(args: argparse.Namespace, tokens: pd.DataFrame) -> list[object]:
+    return build_cluster_configs(
+        algorithms=args.algorithms,
+        n_clusters=_parse_n_clusters(args.n_clusters),
+        tokens=tokens,
+        random_state=args.seed,
+        normalize=args.normalize,
+        batch_size=args.batch_size,
+        n_init=args.n_init,
+        min_samples=args.min_samples,
+        min_cluster_size=args.min_cluster_size,
+        hdbscan_n_jobs=args.n_jobs,
+        metric=args.metric,
+        birch_threshold=args.birch_threshold,
+        birch_branching_factor=args.birch_branching_factor,
+        bisecting_strategy=args.bisecting_strategy,
+        graph_n_neighbors=args.graph_n_neighbors,
+        graph_resolution=args.graph_resolution,
+        graph_metric=args.graph_metric,
+        graph_n_jobs=args.n_jobs,
+    )
 
 
 def _cmd_cluster(args: argparse.Namespace) -> None:
     hierarchy = args.hierarchy if args.hierarchy else None
+    payload = load_embeddings_pickle(args.embeddings)
     results = run_clustering_suite(
-        args.embeddings,
-        configs=_cluster_configs(args),
+        payload,
+        configs=_cluster_configs(args, payload["tokens"]),
         hierarchy=hierarchy,
         hierarchy_depths=args.hierarchy_depths,
         show_progress=not args.no_progress,
@@ -111,6 +119,10 @@ def _cmd_cluster(args: argparse.Namespace) -> None:
         summary = result["summary"]
         if isinstance(summary, pd.DataFrame):
             summary.to_csv(summary_path, index=False)
+        alignment_path = output_path.with_suffix(f".alignment_{index}.csv")
+        alignment = result.get("hierarchy_alignment")
+        if isinstance(alignment, pd.DataFrame) and not alignment.empty:
+            alignment.to_csv(alignment_path, index=False)
     print(f"runs={len(results)}")
     print(f"saved={output_path}")
     print(f"scores={scores_path}")
@@ -158,14 +170,35 @@ def build_arg_parser() -> argparse.ArgumentParser:
     cluster_parser.add_argument(
         "--algorithms",
         nargs="+",
-        default=["minibatch_kmeans"],
-        choices=["kmeans", "minibatch_kmeans", "agglomerative", "hdbscan"],
+        default=["bisecting_kmeans", "birch", "knn_leiden"],
+        choices=[
+            "kmeans",
+            "minibatch_kmeans",
+            "bisecting_kmeans",
+            "birch",
+            "knn_leiden",
+            "knn_louvain",
+            "agglomerative",
+            "hdbscan",
+        ],
     )
-    cluster_parser.add_argument("--n-clusters", type=int, nargs="+", default=[100])
+    cluster_parser.add_argument("--n-clusters", nargs="+", default=["data_semclass"])
     cluster_parser.add_argument("--batch-size", type=int, default=4096)
+    cluster_parser.add_argument("--n-init", type=int, default=1)
     cluster_parser.add_argument("--min-samples", type=int, default=10)
     cluster_parser.add_argument("--min-cluster-size", type=int, default=10)
     cluster_parser.add_argument("--metric", default="euclidean")
+    cluster_parser.add_argument("--birch-threshold", type=float, default=0.75)
+    cluster_parser.add_argument("--birch-branching-factor", type=int, default=100)
+    cluster_parser.add_argument(
+        "--bisecting-strategy",
+        default="biggest_inertia",
+        choices=["biggest_inertia", "largest_cluster"],
+    )
+    cluster_parser.add_argument("--graph-n-neighbors", type=int, default=15)
+    cluster_parser.add_argument("--graph-resolution", type=float, default=1.0)
+    cluster_parser.add_argument("--graph-metric", default="cosine")
+    cluster_parser.add_argument("--n-jobs", type=int)
     cluster_parser.add_argument("--seed", type=int, default=42)
     cluster_parser.add_argument("--no-normalize", dest="normalize", action="store_false")
     cluster_parser.add_argument("--no-progress", action="store_true")

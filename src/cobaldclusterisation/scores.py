@@ -72,13 +72,7 @@ def print_result_scores(label: str, result: dict[str, object]) -> str:
 
     config = result["config"]
     algorithm = str(config["algorithm"])
-    if algorithm == "hdbscan":
-        run_details = (
-            f"min_cluster_size={config.get('min_cluster_size')}, "
-            f"min_samples={config.get('min_samples')}"
-        )
-    else:
-        run_details = f"k={config.get('n_clusters')}"
+    run_details = _run_details(config)
     run_name = (
         f"{label}: {algorithm}, "
         f"{run_details}, "
@@ -122,22 +116,37 @@ def _safe_filename(value: str) -> str:
 def _run_column_name(index: int, result: dict[str, object]) -> str:
     config = result.get("config", {})
     algorithm = str(config.get("algorithm", "run"))
-    if algorithm == "hdbscan":
-        run_part = f"min{config.get('min_cluster_size')}"
-    else:
-        run_part = f"k{config.get('n_clusters')}"
-    return f"run_{index + 1}_{algorithm}_{run_part}"
+    return f"run_{index + 1}_{algorithm}_{_run_part(config)}"
 
 
 def _run_file_part(index: int, result: dict[str, object]) -> str:
     config = result.get("config", {})
     algorithm = str(config.get("algorithm", "run"))
-    run_part = (
-        f"min{config.get('min_cluster_size')}"
-        if algorithm == "hdbscan"
-        else f"k{config.get('n_clusters')}"
-    )
-    return f"{index}_{algorithm}_{run_part}"
+    return f"{index}_{algorithm}_{_run_part(config)}"
+
+
+def _run_part(config: dict[str, object]) -> str:
+    algorithm = str(config.get("algorithm", "run"))
+    if algorithm == "hdbscan":
+        return f"min{config.get('min_cluster_size')}"
+    if algorithm in {"knn_leiden", "knn_louvain"}:
+        return f"nn{config.get('graph_n_neighbors')}"
+    return f"k{config.get('n_clusters')}"
+
+
+def _run_details(config: dict[str, object]) -> str:
+    algorithm = str(config.get("algorithm", "run"))
+    if algorithm == "hdbscan":
+        return (
+            f"min_cluster_size={config.get('min_cluster_size')}, "
+            f"min_samples={config.get('min_samples')}"
+        )
+    if algorithm in {"knn_leiden", "knn_louvain"}:
+        return (
+            f"n_neighbors={config.get('graph_n_neighbors')}, "
+            f"resolution={config.get('graph_resolution')}"
+        )
+    return f"k={config.get('n_clusters')}"
 
 
 def _write_score_excel(scores: pd.DataFrame, output_path: Path) -> None:
