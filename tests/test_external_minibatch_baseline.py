@@ -91,6 +91,58 @@ def test_make_tokenizer_safe_external_chunks_preserves_targets() -> None:
     assert sum(safe_chunk.target_count for safe_chunk in safe_chunks) == 4
 
 
+def _write_ud_conllu(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "# sent_id = syntagrus-1",
+                "# text = Кошка спит, банк открыт.",
+                "1\tКошка\tкошка\tNOUN\t_\tAnimacy=Anim\t2\tnsubj\t_\t_",
+                "2\tспит\tспать\tVERB\t_\t_\t0\troot\t_\t_",
+                "3\t,\t,\tPUNCT\t_\t_\t2\tpunct\t_\t_",
+                "4\tбанк\tбанк\tNOUN\t_\t_\t5\tnsubj\t_\t_",
+                "5\tоткрыт\tоткрыть\tVERB\t_\t_\t2\tconj\t_\t_",
+                "6\t.\t.\tPUNCT\t_\t_\t2\tpunct\t_\t_",
+                "",
+                "# sent_id = syntagrus-2",
+                "# text = Кот и деньги.",
+                "1-2\tКот-и\t_\t_\t_\t_\t_\t_\t_\t_",
+                "1\tКот\tкот\tNOUN\t_\t_\t0\troot\t_\t_",
+                "2\tи\tи\tCCONJ\t_\t_\t3\tcc\t_\t_",
+                "3\tденьги\tденьги\tNOUN\t_\t_\t1\tconj\t_\t_",
+                "4\t.\t.\tPUNCT\t_\t_\t1\tpunct\t_\t_",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_iter_ud_conllu_chunks_keeps_forms_lemmas_and_word_targets(
+    tmp_path: Path,
+) -> None:
+    ud_path = tmp_path / "ru_syntagrus-ud-train-a.conllu"
+    _write_ud_conllu(ud_path)
+
+    chunks = list(
+        external.iter_ud_conllu_chunks(
+            [ud_path],
+            max_context_tokens=4,
+            max_context_word_tokens=3,
+        )
+    )
+
+    assert [chunk.tokens for chunk in chunks] == [
+        ["Кошка", "спит", ",", "банк"],
+        ["открыт", "."],
+        ["Кот", "и", "деньги", "."],
+    ]
+    assert chunks[0].lemmas == ["кошка", "спать", ",", "банк"]
+    assert chunks[0].target_indices == [0, 1, 3]
+    assert chunks[2].tokens[0] == "Кот"
+    assert "Кот-и" not in chunks[2].tokens
+
+
 class DummyEmbedder:
     hidden_size = 2
 
@@ -140,6 +192,49 @@ def _write_conllu(path: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def test_run_uses_ud_syntagrus_for_external_training(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "CobaldRus"
+    data_dir.mkdir()
+    _write_conllu(data_dir / "train.conllu")
+    _write_conllu(data_dir / "dev.conllu")
+
+    syntagrus_dir = tmp_path / "UD_Russian-SynTagRus"
+    syntagrus_dir.mkdir()
+    _write_ud_conllu(syntagrus_dir / "ru_syntagrus-ud-train-a.conllu")
+
+    monkeypatch.setattr(external, "_TransformerEmbedder", DummyEmbedder)
+
+    result = external.run(
+        data_dir=data_dir,
+        hierarchy=None,
+        external_source=external.SYNTAGRUS_EXTERNAL_SOURCE,
+        syntagrus_dir=syntagrus_dir,
+        syntagrus_files=("ru_syntagrus-ud-train-a.conllu",),
+        max_train_tokens=4,
+        output_dir=tmp_path,
+        model_name="dummy",
+        model_label="dummy_syntagrus_external",
+        embedding_batch_size=2,
+        kmeans_batch_size=4,
+        n_clusters="data_semclass",
+        device=None,
+        show_progress=False,
+    )
+
+    assert result["config"]["external_source"] == external.SYNTAGRUS_EXTERNAL_SOURCE
+    assert result["config"]["external_training_tokens"] == 4
+    assert result["config"]["external_data_paths"] == [
+        str(syntagrus_dir / "ru_syntagrus-ud-train-a.conllu")
+    ]
+    assert Path(result["paths"]["training_features"]).exists()
+    clustered = pd.read_csv(result["paths"]["clustered_tokens_csv"])
+    assert "cluster" in clustered.columns
+    assert len(clustered) == 8
 
 
 def test_run_trains_external_kmeans_and_scores_cobald(

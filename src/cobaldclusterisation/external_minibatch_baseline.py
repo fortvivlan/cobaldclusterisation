@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import pickle
 import re
+import subprocess
 from typing import Iterable, Iterator, Sequence
 
 import numpy as np
@@ -42,6 +43,17 @@ from .summary_excel import write_cluster_summary_excel, write_hierarchy_alignmen
 
 DEFAULT_DATASET_NAME = "HuggingFaceFW/fineweb-2"
 DEFAULT_DATASET_SUBSET = "rus_Cyrl"
+DEFAULT_EXTERNAL_SOURCE = "fineweb2"
+SYNTAGRUS_EXTERNAL_SOURCE = "syntagrus_ud"
+DEFAULT_SYNTAGRUS_REPO_URL = (
+    "https://github.com/UniversalDependencies/UD_Russian-SynTagRus.git"
+)
+DEFAULT_SYNTAGRUS_DIR = "UD_Russian-SynTagRus"
+DEFAULT_SYNTAGRUS_FILES = (
+    "ru_syntagrus-ud-train-a.conllu",
+    "ru_syntagrus-ud-train-b.conllu",
+    "ru_syntagrus-ud-train-c.conllu",
+)
 DEFAULT_RUBERT_MODEL = "DeepPavlov/rubert-base-cased"
 DEFAULT_SAMBALINGO_MODEL = "sambanovasystems/SambaLingo-Russian-Base"
 DEFAULT_GIGACHAT_MODEL = "ai-sage/GigaChat3-10B-A1.8B-base"
@@ -58,6 +70,7 @@ class RawTextChunk:
     target_indices: list[int]
     document_index: int
     chunk_index: int
+    lemmas: list[str] | None = None
 
     @property
     def target_count(self) -> int:
@@ -230,11 +243,13 @@ def _slice_raw_text_chunk(
     ]
     if not target_indices:
         return None
+    lemmas = chunk.lemmas[start:stop] if chunk.lemmas is not None else None
     return RawTextChunk(
         tokens=tokens,
         target_indices=target_indices,
         document_index=chunk.document_index,
         chunk_index=chunk.chunk_index,
+        lemmas=lemmas,
     )
 
 
@@ -313,6 +328,13 @@ def _require_datasets() -> object:
             "'datasets'. Install in Colab with: pip install -e '.[embeddings,external]'"
         ) from exc
     return load_dataset
+
+
+def _clone_repo_if_missing(repo_url: str, destination: Path) -> None:
+    if destination.exists():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "clone", repo_url, str(destination)], check=True)
 
 
 def is_word_token(token: str) -> bool:
@@ -396,12 +418,239 @@ def _trim_chunk_to_target_count(
     target_indices = [
         index for index, token in enumerate(tokens) if is_word_token(token)
     ]
+    lemmas = (
+        chunk.lemmas[: final_target_index + 1]
+        if chunk.lemmas is not None
+        else None
+    )
     return RawTextChunk(
         tokens=tokens,
         target_indices=target_indices,
         document_index=chunk.document_index,
         chunk_index=chunk.chunk_index,
+        lemmas=lemmas,
     )
+
+
+def _is_conllu_surface_id(token_id: str) -> bool:
+    return "-" not in token_id and "." not in token_id
+
+
+def _emit_ud_sentence_chunks(
+    *,
+    tokens: Sequence[str],
+    lemmas: Sequence[str],
+    target_indices: Sequence[int],
+    sentence_index: int,
+    start_chunk_index: int,
+    max_context_tokens: int,
+    max_context_word_tokens: int,
+) -> list[RawTextChunk]:
+    target_index_set = set(target_indices)
+    chunks: list[RawTextChunk] = []
+    chunk_tokens: list[str] = []
+    chunk_lemmas: list[str] = []
+    chunk_target_indices: list[int] = []
+    chunk_index = start_chunk_index
+
+    def flush() -> None:
+        nonlocal chunk_tokens, chunk_lemmas, chunk_target_indices, chunk_index
+        if chunk_target_indices:
+            chunks.append(
+                RawTextChunk(
+                    tokens=chunk_tokens,
+                    target_indices=chunk_target_indices,
+                    document_index=sentence_index,
+                    chunk_index=chunk_index,
+                    lemmas=chunk_lemmas,
+                )
+            )
+            chunk_index += 1
+        chunk_tokens = []
+        chunk_lemmas = []
+        chunk_target_indices = []
+
+    for token_index, (token, lemma) in enumerate(zip(tokens, lemmas, strict=True)):
+        token_is_target = token_index in target_index_set
+        if chunk_tokens and (
+            len(chunk_tokens) >= max_context_tokens
+            or (
+                token_is_target
+                and len(chunk_target_indices) >= max_context_word_tokens
+            )
+        ):
+            flush()
+        if token_is_target:
+            chunk_target_indices.append(len(chunk_tokens))
+        chunk_tokens.append(token)
+        chunk_lemmas.append(lemma)
+
+    flush()
+    return chunks
+
+
+def iter_ud_conllu_chunks(
+    paths: Sequence[str | Path],
+    *,
+    max_context_tokens: int = 192,
+    max_context_word_tokens: int = 128,
+    max_sentences: int | None = None,
+) -> Iterator[RawTextChunk]:
+    """Yield embedding contexts from standard UD CoNLL-U files.
+
+    UD SynTagRus has no CoBaLD semantic class column. This reader keeps only
+    the word-level information needed for external training: FORM as context
+    tokens and LEMMA aligned with those forms for inspection/reproducibility.
+    """
+
+    if max_context_tokens < 1:
+        raise ValueError("max_context_tokens must be positive")
+    if max_context_word_tokens < 1:
+        raise ValueError("max_context_word_tokens must be positive")
+    if max_sentences is not None and max_sentences <= 0:
+        return
+
+    sentence_index = 0
+    chunk_index = 0
+
+    def flush_sentence(rows: list[list[str]]) -> list[RawTextChunk]:
+        nonlocal sentence_index, chunk_index
+        tokens: list[str] = []
+        lemmas: list[str] = []
+        target_indices: list[int] = []
+        for columns in rows:
+            token_id, form, lemma, upos = columns[0], columns[1], columns[2], columns[3]
+            if not _is_conllu_surface_id(token_id):
+                continue
+            if not form or form == "_":
+                continue
+            token_index = len(tokens)
+            tokens.append(form)
+            lemmas.append(lemma)
+            if upos.upper() != "PUNCT" and is_word_token(form):
+                target_indices.append(token_index)
+
+        chunks = _emit_ud_sentence_chunks(
+            tokens=tokens,
+            lemmas=lemmas,
+            target_indices=target_indices,
+            sentence_index=sentence_index,
+            start_chunk_index=chunk_index,
+            max_context_tokens=max_context_tokens,
+            max_context_word_tokens=max_context_word_tokens,
+        )
+        sentence_index += 1
+        chunk_index += len(chunks)
+        return chunks
+
+    for path in paths:
+        path = Path(path)
+        rows: list[list[str]] = []
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                line = raw_line.rstrip("\r\n")
+                if not line:
+                    if rows:
+                        for chunk in flush_sentence(rows):
+                            yield chunk
+                        rows = []
+                        if (
+                            max_sentences is not None
+                            and sentence_index >= max_sentences
+                        ):
+                            return
+                    continue
+                if line.startswith("#"):
+                    continue
+                columns = line.split("\t")
+                if len(columns) != 10:
+                    raise ValueError(
+                        f"{path}:{line_number}: expected 10 UD CoNLL-U columns, "
+                        f"got {len(columns)}."
+                    )
+                rows.append(columns)
+        if rows:
+            for chunk in flush_sentence(rows):
+                yield chunk
+            if max_sentences is not None and sentence_index >= max_sentences:
+                return
+
+
+def _resolve_syntagrus_paths(
+    syntagrus_dir: str | Path,
+    *,
+    syntagrus_files: Sequence[str] | None,
+    clone_syntagrus_if_missing: bool,
+    syntagrus_repo_url: str,
+) -> list[Path]:
+    path = Path(syntagrus_dir)
+    if clone_syntagrus_if_missing:
+        _clone_repo_if_missing(syntagrus_repo_url, path)
+    if path.is_file():
+        return [path]
+    if not path.is_dir():
+        raise FileNotFoundError(
+            f"SynTagRus directory not found: {path}. Clone "
+            f"{syntagrus_repo_url} there, pass syntagrus_dir, or set "
+            "clone_syntagrus_if_missing=True."
+        )
+    names = (
+        tuple(syntagrus_files)
+        if syntagrus_files is not None
+        else DEFAULT_SYNTAGRUS_FILES
+    )
+    paths = [path / name for name in names]
+    missing = [candidate for candidate in paths if not candidate.is_file()]
+    if missing:
+        missing_text = ", ".join(str(candidate) for candidate in missing)
+        raise FileNotFoundError(f"Missing SynTagRus CoNLL-U file(s): {missing_text}")
+    return paths
+
+
+def collect_ud_conllu_contexts(
+    paths: Sequence[str | Path],
+    *,
+    max_train_tokens: int,
+    max_sentences: int | None = None,
+    max_context_tokens: int = 192,
+    max_context_word_tokens: int = 128,
+    show_progress: bool = True,
+) -> list[RawTextChunk]:
+    """Collect UD CoNLL-U contexts up to the external training token budget."""
+
+    if max_train_tokens < 1:
+        raise ValueError("max_train_tokens must be positive")
+
+    chunks: list[RawTextChunk] = []
+    target_total = 0
+    progress = tqdm(
+        total=max_train_tokens,
+        desc="Collecting UD targets",
+        disable=not show_progress,
+    )
+    try:
+        for chunk in iter_ud_conllu_chunks(
+            paths,
+            max_context_tokens=max_context_tokens,
+            max_context_word_tokens=max_context_word_tokens,
+            max_sentences=max_sentences,
+        ):
+            remaining = max_train_tokens - target_total
+            if remaining <= 0:
+                break
+            if chunk.target_count > remaining:
+                chunk = _trim_chunk_to_target_count(chunk, target_count=remaining)
+            chunks.append(chunk)
+            target_total += chunk.target_count
+            progress.update(chunk.target_count)
+            if target_total >= max_train_tokens:
+                break
+    finally:
+        progress.close()
+
+    if target_total == 0:
+        raise ValueError("No word-like targets were collected from the UD corpus")
+    return chunks
 
 
 def collect_external_contexts(
@@ -918,6 +1167,19 @@ def _save_config(config: dict[str, object], path: Path) -> str:
     return str(path)
 
 
+def _normalize_external_source(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_")
+    aliases = {
+        "fineweb": DEFAULT_EXTERNAL_SOURCE,
+        "fineweb2": DEFAULT_EXTERNAL_SOURCE,
+        "fineweb_2": DEFAULT_EXTERNAL_SOURCE,
+        "syntagrus": SYNTAGRUS_EXTERNAL_SOURCE,
+        "ud_syntagrus": SYNTAGRUS_EXTERNAL_SOURCE,
+        "syntagrus_ud": SYNTAGRUS_EXTERNAL_SOURCE,
+    }
+    return aliases.get(normalized, normalized)
+
+
 def _build_result(
     *,
     cobald_features: np.ndarray,
@@ -965,10 +1227,15 @@ def run(
     data_dir: str | Path = "CobaldRus",
     hierarchy: str | Path | pd.DataFrame | None = "hyperonims_hierarchy.csv",
     splits: Sequence[str] = ("train", "dev"),
+    external_source: str = DEFAULT_EXTERNAL_SOURCE,
     dataset_name: str = DEFAULT_DATASET_NAME,
     dataset_subset: str = DEFAULT_DATASET_SUBSET,
     split: str = "train",
     text_column: str = "text",
+    syntagrus_dir: str | Path = DEFAULT_SYNTAGRUS_DIR,
+    syntagrus_files: Sequence[str] | None = DEFAULT_SYNTAGRUS_FILES,
+    syntagrus_repo_url: str = DEFAULT_SYNTAGRUS_REPO_URL,
+    clone_syntagrus_if_missing: bool = False,
     max_train_tokens: int = 3_000_000,
     max_documents: int | None = None,
     shuffle_buffer_size: int = 10_000,
@@ -1005,6 +1272,7 @@ def run(
     artifact_dir = Path(drive_dir) if save_models_to_drive else output_dir
     artifact_dir.mkdir(parents=True, exist_ok=True)
     safe_label = _safe_label(model_label)
+    resolved_external_source = _normalize_external_source(external_source)
 
     sentences = load_corpus(data_dir, splits=splits)
     cobald_reference_tokens = corpus_to_dataframe(
@@ -1017,22 +1285,46 @@ def run(
         tokens=cobald_reference_tokens,
     )
 
-    dataset = load_external_dataset_stream(
-        dataset_name=dataset_name,
-        dataset_subset=dataset_subset,
-        split=split,
-        seed=seed,
-        shuffle_buffer_size=shuffle_buffer_size,
-    )
-    external_chunks = collect_external_contexts(
-        dataset,
-        max_train_tokens=max_train_tokens,
-        text_column=text_column,
-        max_documents=max_documents,
-        max_context_tokens=max_context_tokens,
-        max_context_word_tokens=max_context_word_tokens,
-        show_progress=show_progress,
-    )
+    if resolved_external_source == DEFAULT_EXTERNAL_SOURCE:
+        dataset = load_external_dataset_stream(
+            dataset_name=dataset_name,
+            dataset_subset=dataset_subset,
+            split=split,
+            seed=seed,
+            shuffle_buffer_size=shuffle_buffer_size,
+        )
+        external_chunks = collect_external_contexts(
+            dataset,
+            max_train_tokens=max_train_tokens,
+            text_column=text_column,
+            max_documents=max_documents,
+            max_context_tokens=max_context_tokens,
+            max_context_word_tokens=max_context_word_tokens,
+            show_progress=show_progress,
+        )
+        external_data_paths: list[str] = []
+    elif resolved_external_source == SYNTAGRUS_EXTERNAL_SOURCE:
+        syntagrus_paths = _resolve_syntagrus_paths(
+            syntagrus_dir,
+            syntagrus_files=syntagrus_files,
+            clone_syntagrus_if_missing=clone_syntagrus_if_missing,
+            syntagrus_repo_url=syntagrus_repo_url,
+        )
+        external_chunks = collect_ud_conllu_contexts(
+            syntagrus_paths,
+            max_train_tokens=max_train_tokens,
+            max_sentences=max_documents,
+            max_context_tokens=max_context_tokens,
+            max_context_word_tokens=max_context_word_tokens,
+            show_progress=show_progress,
+        )
+        external_data_paths = [str(path) for path in syntagrus_paths]
+    else:
+        raise ValueError(
+            "external_source must be one of "
+            f"{DEFAULT_EXTERNAL_SOURCE!r}, {SYNTAGRUS_EXTERNAL_SOURCE!r}; "
+            f"got {external_source!r}."
+        )
 
     embedding_config = EmbeddingConfig(
         model_name=model_name,
@@ -1165,10 +1457,18 @@ def run(
     )
     config_path = _save_config(
         {
+            "external_source": resolved_external_source,
             "dataset_name": dataset_name,
             "dataset_subset": dataset_subset,
             "split": split,
             "text_column": text_column,
+            "syntagrus_dir": str(syntagrus_dir),
+            "syntagrus_files": (
+                list(syntagrus_files) if syntagrus_files is not None else None
+            ),
+            "syntagrus_repo_url": syntagrus_repo_url,
+            "clone_syntagrus_if_missing": clone_syntagrus_if_missing,
+            "external_data_paths": external_data_paths,
             "max_train_tokens": max_train_tokens,
             "external_training_tokens": external_token_count,
             "external_contexts": len(external_chunks),
@@ -1223,6 +1523,21 @@ def run_rubert_external(**kwargs: object) -> dict[str, object]:
     return run(**defaults)
 
 
+def run_rubert_syntagrus_external(**kwargs: object) -> dict[str, object]:
+    """Run the external pipeline with RuBERT trained on UD Russian SynTagRus."""
+
+    defaults = {
+        "external_source": SYNTAGRUS_EXTERNAL_SOURCE,
+        "model_name": DEFAULT_RUBERT_MODEL,
+        "model_label": "rubert_base_external_syntagrus_ud",
+        "embedding_batch_size": 16,
+        "torch_dtype": None,
+        "projection_n_components": None,
+    }
+    defaults.update(kwargs)
+    return run(**defaults)
+
+
 def run_sambalingo_external(**kwargs: object) -> dict[str, object]:
     """Run the external pipeline with SambaLingo Russian Base."""
 
@@ -1239,12 +1554,47 @@ def run_sambalingo_external(**kwargs: object) -> dict[str, object]:
     return run(**defaults)
 
 
+def run_sambalingo_syntagrus_external(**kwargs: object) -> dict[str, object]:
+    """Run the external SynTagRus pipeline with SambaLingo Russian Base."""
+
+    defaults = {
+        "external_source": SYNTAGRUS_EXTERNAL_SOURCE,
+        "model_name": DEFAULT_SAMBALINGO_MODEL,
+        "model_label": "sambalingo_russian_base_external_syntagrus_ud",
+        "embedding_batch_size": 1,
+        "torch_dtype": "float16",
+        "projection_n_components": 256,
+        "projection_batch_size": 8192,
+        "normalize_for_clustering": True,
+    }
+    defaults.update(kwargs)
+    return run(**defaults)
+
+
 def run_gigachat_external(**kwargs: object) -> dict[str, object]:
     """Run the external pipeline with GigaChat3 10B A1.8B base."""
 
     defaults = {
         "model_name": DEFAULT_GIGACHAT_MODEL,
         "model_label": "gigachat3_10b_a1_8b_base_external_fineweb2",
+        "embedding_batch_size": 1,
+        "torch_dtype": "bfloat16",
+        "trust_remote_code": False,
+        "projection_n_components": 256,
+        "projection_batch_size": 8192,
+        "normalize_for_clustering": True,
+    }
+    defaults.update(kwargs)
+    return run(**defaults)
+
+
+def run_gigachat_syntagrus_external(**kwargs: object) -> dict[str, object]:
+    """Run the external SynTagRus pipeline with GigaChat3 10B A1.8B base."""
+
+    defaults = {
+        "external_source": SYNTAGRUS_EXTERNAL_SOURCE,
+        "model_name": DEFAULT_GIGACHAT_MODEL,
+        "model_label": "gigachat3_10b_a1_8b_base_external_syntagrus_ud",
         "embedding_batch_size": 1,
         "torch_dtype": "bfloat16",
         "trust_remote_code": False,

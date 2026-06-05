@@ -374,6 +374,38 @@ external_rubert = run_rubert_external(
 external_rubert["paths"]
 ```
 
+To train the same external K-Means stage on UD Russian SynTagRus instead of
+FineWeb2, use the SynTagRus source option. The default SynTagRus file list is
+the three train files from
+`https://github.com/UniversalDependencies/UD_Russian-SynTagRus`
+(`ru_syntagrus-ud-train-a.conllu`, `-b.conllu`, `-c.conllu`). SynTagRus has
+standard UD annotation, so this mode uses token `FORM` values for embedding
+contexts and keeps aligned `LEMMA` values for reproducibility; CoBaLD labels are
+used only after training, when the fitted K-Means predicts CoBaLD clusters.
+
+```python
+from cobaldclusterisation.external_minibatch_baseline import (
+    run_rubert_syntagrus_external,
+)
+
+external_syntagrus = run_rubert_syntagrus_external(
+    data_dir=paths.corpus_dir,
+    hierarchy=paths.hierarchy_csv,
+    syntagrus_dir="/content/UD_Russian-SynTagRus",
+    clone_syntagrus_if_missing=True,
+    output_dir="/content",
+    save_models_to_drive=True,
+    drive_dir="/content/drive/MyDrive/cobald_outputs",
+    max_train_tokens=3_000_000,
+    n_clusters="data_semclass",
+    embedding_batch_size=16,
+    kmeans_batch_size=4096,
+    device="cuda",
+    seed=42,
+    show_progress=True,
+)
+```
+
 For high-memory GPU runs:
 
 ```python
