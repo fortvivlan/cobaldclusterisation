@@ -164,7 +164,16 @@ class _TransformerEmbedder:
                         if aligned_word_index == word_index
                     ]
                     if not piece_positions:
-                        continue
+                        token = (
+                            words_by_context[batch_index][word_index]
+                            if word_index < len(words_by_context[batch_index])
+                            else "<out-of-range>"
+                        )
+                        raise ValueError(
+                            "Tokenizer alignment produced no subword pieces for "
+                            f"target token {token!r} at word index {word_index}. "
+                            "Increase max_length or split contexts before embedding."
+                        )
                     token_hidden = hidden[batch_index, piece_positions, :].mean(dim=0)
                     vector = token_hidden.detach().cpu().numpy().astype(np.float32)
                     if self.config.normalize:
@@ -178,6 +187,121 @@ class _TransformerEmbedder:
             if vectors
             else np.empty((0, self.hidden_size), dtype=np.float32)
         )
+
+
+def _tokenizer_special_token_count(tokenizer: object) -> int:
+    count = getattr(tokenizer, "num_special_tokens_to_add", None)
+    if callable(count):
+        return int(count(pair=False))
+    return 0
+
+
+def _pretokenized_piece_lengths(
+    tokenizer: object,
+    tokens: Sequence[str],
+) -> list[int]:
+    encoded = tokenizer(
+        list(tokens),
+        is_split_into_words=True,
+        add_special_tokens=False,
+        truncation=False,
+    )
+    word_ids = encoded.word_ids()
+    piece_lengths = [0 for _ in tokens]
+    for word_index in word_ids:
+        if word_index is not None:
+            piece_lengths[int(word_index)] += 1
+    return piece_lengths
+
+
+def _slice_raw_text_chunk(
+    chunk: RawTextChunk,
+    *,
+    start: int,
+    stop: int,
+) -> RawTextChunk | None:
+    tokens = chunk.tokens[start:stop]
+    if not tokens:
+        return None
+    target_indices = [
+        index - start
+        for index in chunk.target_indices
+        if start <= index < stop
+    ]
+    if not target_indices:
+        return None
+    return RawTextChunk(
+        tokens=tokens,
+        target_indices=target_indices,
+        document_index=chunk.document_index,
+        chunk_index=chunk.chunk_index,
+    )
+
+
+def split_chunk_for_tokenizer(
+    chunk: RawTextChunk,
+    *,
+    tokenizer: object,
+    max_length: int,
+) -> list[RawTextChunk]:
+    """Split one raw chunk so tokenizer truncation cannot remove targets."""
+
+    if max_length < 1:
+        raise ValueError("max_length must be positive")
+
+    token_budget = max_length - _tokenizer_special_token_count(tokenizer)
+    if token_budget < 1:
+        raise ValueError(
+            "max_length leaves no room for text tokens after tokenizer special tokens"
+        )
+
+    piece_lengths = _pretokenized_piece_lengths(tokenizer, chunk.tokens)
+    if sum(piece_lengths) <= token_budget:
+        return [chunk]
+
+    target_index_set = set(chunk.target_indices)
+    safe_chunks: list[RawTextChunk] = []
+    start = 0
+    current_pieces = 0
+
+    for index, piece_count in enumerate(piece_lengths):
+        if piece_count == 0 and index in target_index_set:
+            raise ValueError(
+                "Tokenizer produced no subword pieces for external target token "
+                f"{chunk.tokens[index]!r} in document {chunk.document_index}, "
+                f"chunk {chunk.chunk_index}."
+            )
+        if piece_count > token_budget:
+            if index in target_index_set:
+                raise ValueError(
+                    "External target token is too long for tokenizer max_length: "
+                    f"{chunk.tokens[index]!r} in document {chunk.document_index}, "
+                    f"chunk {chunk.chunk_index}. Increase max_length."
+                )
+            emitted = _slice_raw_text_chunk(chunk, start=start, stop=index)
+            if emitted is not None:
+                safe_chunks.append(emitted)
+            start = index + 1
+            current_pieces = 0
+            continue
+        if index > start and current_pieces + piece_count > token_budget:
+            emitted = _slice_raw_text_chunk(chunk, start=start, stop=index)
+            if emitted is not None:
+                safe_chunks.append(emitted)
+            start = index
+            current_pieces = 0
+        current_pieces += piece_count
+
+    emitted = _slice_raw_text_chunk(chunk, start=start, stop=len(chunk.tokens))
+    if emitted is not None:
+        safe_chunks.append(emitted)
+
+    if sum(safe_chunk.target_count for safe_chunk in safe_chunks) != chunk.target_count:
+        raise ValueError(
+            "Tokenizer-safe splitting changed the external target count for "
+            f"document {chunk.document_index}, chunk {chunk.chunk_index}."
+        )
+    return safe_chunks
 
 
 def _require_datasets() -> object:
@@ -336,6 +460,40 @@ def collect_external_contexts(
     if target_total == 0:
         raise ValueError("No word-like targets were collected from the external corpus")
     return chunks
+
+
+def make_tokenizer_safe_external_chunks(
+    chunks: Sequence[RawTextChunk],
+    *,
+    tokenizer: object,
+    max_length: int,
+    show_progress: bool = True,
+) -> list[RawTextChunk]:
+    """Return chunks whose targets all fit within tokenizer max_length."""
+
+    safe_chunks: list[RawTextChunk] = []
+    progress = tqdm(
+        chunks,
+        desc="Splitting tokenizer-safe contexts",
+        disable=not show_progress,
+    )
+    for chunk in progress:
+        safe_chunks.extend(
+            split_chunk_for_tokenizer(
+                chunk,
+                tokenizer=tokenizer,
+                max_length=max_length,
+            )
+        )
+
+    original_targets = sum(chunk.target_count for chunk in chunks)
+    safe_targets = sum(chunk.target_count for chunk in safe_chunks)
+    if safe_targets != original_targets:
+        raise ValueError(
+            f"Expected tokenizer-safe chunks to keep {original_targets} targets, "
+            f"kept {safe_targets}."
+        )
+    return safe_chunks
 
 
 def load_external_dataset_stream(
@@ -875,11 +1033,6 @@ def run(
         max_context_word_tokens=max_context_word_tokens,
         show_progress=show_progress,
     )
-    external_token_count = sum(chunk.target_count for chunk in external_chunks)
-    print(f"external_training_tokens={external_token_count}")
-    print(f"external_contexts={len(external_chunks)}")
-    print(f"cobald_tokens={len(cobald_reference_tokens)}")
-    print(f"n_clusters={resolved_n_clusters}")
 
     embedding_config = EmbeddingConfig(
         model_name=model_name,
@@ -893,6 +1046,17 @@ def run(
         include_punctuation_context=include_punctuation_context,
     )
     embedder = _TransformerEmbedder(embedding_config)
+    external_chunks = make_tokenizer_safe_external_chunks(
+        external_chunks,
+        tokenizer=embedder.tokenizer,
+        max_length=max_length,
+        show_progress=show_progress,
+    )
+    external_token_count = sum(chunk.target_count for chunk in external_chunks)
+    print(f"external_training_tokens={external_token_count}")
+    print(f"external_contexts={len(external_chunks)}")
+    print(f"cobald_tokens={len(cobald_reference_tokens)}")
+    print(f"n_clusters={resolved_n_clusters}")
 
     projection: IncrementalPCA | None = None
     if projection_n_components is not None:

@@ -38,11 +38,65 @@ def test_collect_external_contexts_respects_token_cap() -> None:
     assert chunks[-1].tokens == ["кот"]
 
 
+class FakeEncoding:
+    def __init__(self, word_ids: list[int]) -> None:
+        self._word_ids = word_ids
+
+    def word_ids(self) -> list[int]:
+        return self._word_ids
+
+
+class FakeTokenizer:
+    def num_special_tokens_to_add(self, pair: bool = False) -> int:
+        return 2
+
+    def __call__(
+        self,
+        tokens: list[str],
+        *,
+        is_split_into_words: bool,
+        add_special_tokens: bool,
+        truncation: bool,
+    ) -> FakeEncoding:
+        assert is_split_into_words
+        assert not add_special_tokens
+        assert not truncation
+        word_ids: list[int] = []
+        for index, token in enumerate(tokens):
+            piece_count = 4 if token.startswith("длинный") else 1
+            word_ids.extend([index] * piece_count)
+        return FakeEncoding(word_ids)
+
+
+def test_make_tokenizer_safe_external_chunks_preserves_targets() -> None:
+    chunk = external.RawTextChunk(
+        tokens=["кошка", "длинный", "банк", "кот"],
+        target_indices=[0, 1, 2, 3],
+        document_index=0,
+        chunk_index=0,
+    )
+
+    safe_chunks = external.make_tokenizer_safe_external_chunks(
+        [chunk],
+        tokenizer=FakeTokenizer(),
+        max_length=6,
+        show_progress=False,
+    )
+
+    assert [safe_chunk.tokens for safe_chunk in safe_chunks] == [
+        ["кошка"],
+        ["длинный"],
+        ["банк", "кот"],
+    ]
+    assert sum(safe_chunk.target_count for safe_chunk in safe_chunks) == 4
+
+
 class DummyEmbedder:
     hidden_size = 2
 
     def __init__(self, config: object) -> None:
         self.config = config
+        self.tokenizer = FakeTokenizer()
 
     def embed_pretokenized(
         self,
