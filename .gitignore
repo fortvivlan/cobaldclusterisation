@@ -222,6 +222,7 @@ CobaldRus/
 semantic-hierarchy/
 hyperonims_hierarchy.csv
 outputs/
+*.dat
 *.pkl
 uv.lock
 AGENTS.md

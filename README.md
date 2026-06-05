@@ -302,6 +302,82 @@ baseline.
 Pass `embeddings_path` to skip GigaChat3 embedding generation and rerun only
 projection, clustering, and exports from a saved full-embedding pickle.
 
+## Colab Workflow 4: External FineWeb2 MiniBatch K-Means
+
+This workflow is separate from the hierarchical-clustering code. It trains
+`MiniBatchKMeans` on unlabeled Russian raw text from
+`HuggingFaceFW/fineweb-2`, subset `rus_Cyrl`, then predicts cluster labels for
+CoBaLD tokens and evaluates those predicted labels against `SEMCLASS`.
+FineWeb2 is streamed, so the full Russian subset is not downloaded.
+
+Install the additional streaming dependency:
+
+```python
+!pip install -e ".[embeddings,external]" openpyxl
+```
+
+The default external sample is 3,000,000 word-like target tokens. This is above
+the CoBaLD train+dev embedding target count and is feasible in Colab because
+features are written to disk-backed memmaps. For SambaLingo and GigaChat, the
+pipeline fits IncrementalPCA before clustering so it does not need to store the
+full 4096-dimensional external embedding matrix.
+
+```python
+from cobaldclusterisation.external_minibatch_baseline import run_rubert_external
+
+external_rubert = run_rubert_external(
+    data_dir=paths.corpus_dir,
+    hierarchy=paths.hierarchy_csv,
+    output_dir="/content",
+    save_models_to_drive=True,
+    drive_dir="/content/drive/MyDrive/cobald_outputs",
+    max_train_tokens=3_000_000,
+    n_clusters="data_semclass",
+    embedding_batch_size=16,
+    kmeans_batch_size=4096,
+    device="cuda",
+    seed=42,
+    show_progress=True,
+)
+
+external_rubert["paths"]
+```
+
+For high-memory GPU runs:
+
+```python
+from cobaldclusterisation.external_minibatch_baseline import (
+    run_gigachat_external,
+    run_sambalingo_external,
+)
+
+external_sambalingo = run_sambalingo_external(
+    data_dir=paths.corpus_dir,
+    hierarchy=paths.hierarchy_csv,
+    output_dir="/content",
+    save_models_to_drive=True,
+    drive_dir="/content/drive/MyDrive/cobald_outputs",
+    max_train_tokens=3_000_000,
+    device="cuda",
+    show_progress=True,
+)
+
+external_gigachat = run_gigachat_external(
+    data_dir=paths.corpus_dir,
+    hierarchy=paths.hierarchy_csv,
+    output_dir="/content",
+    save_models_to_drive=True,
+    drive_dir="/content/drive/MyDrive/cobald_outputs",
+    max_train_tokens=3_000_000,
+    device="cuda",
+    show_progress=True,
+)
+```
+
+Outputs include CoBaLD cluster summaries, hierarchy alignment, score CSV/XLSX,
+a token-level CoBaLD table with the predicted `cluster` column, the fitted
+K-Means model, optional PCA model, and a JSON run config.
+
 ## CLI Examples
 
 After `pip install -e ".[embeddings]"`:

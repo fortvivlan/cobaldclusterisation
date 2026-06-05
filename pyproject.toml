@@ -24,6 +24,9 @@ embeddings = [
     "torch>=2.1",
     "transformers>=4.53.2",
 ]
+external = [
+    "datasets>=2.18",
+]
 graph = [
     "igraph>=0.11",
     "leidenalg>=0.10",
