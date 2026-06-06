@@ -333,6 +333,128 @@ baseline.
 Pass `embeddings_path` to skip GigaChat3 embedding generation and rerun only
 projection, clustering, and exports from a saved full-embedding pickle.
 
+## Hierarchical Baselines With SynTagRus Training
+
+The three hierarchical baselines can also train the clustering algorithm on UD
+Russian SynTagRus, then apply the fitted clusters to CoBaLD tokens and evaluate
+only against CoBaLD `SEMCLASS`. This is useful for checking whether unlabeled
+external syntax-annotated text produces a different semantic hierarchy signal.
+SynTagRus has no CoBaLD semantic classes; the parser keeps `FORM` and `LEMMA`
+and fills semantic fields with `_`.
+
+Use `training_source` in any of the main baseline `run()` functions:
+
+- `training_source="cobald"` keeps the default behavior: embed CoBaLD, cluster
+  CoBaLD, and evaluate CoBaLD.
+- `training_source="syntagrus"` embeds SynTagRus for clustering training,
+  embeds CoBaLD separately, predicts CoBaLD cluster labels, and evaluates those
+  labels against CoBaLD annotations.
+- `training_source="syntagrus_cobald"` embeds SynTagRus and CoBaLD, trains on
+  the merged embedding table, then applies/scores labels on CoBaLD.
+
+The default SynTagRus files are the three UD train files from
+`https://github.com/UniversalDependencies/UD_Russian-SynTagRus`
+(`ru_syntagrus-ud-train-a.conllu`, `-b.conllu`, `-c.conllu`). Pass
+`clone_syntagrus_if_missing=True` to clone that repository in Colab, or pass
+`syntagrus_dir` and `syntagrus_files` to use local files.
+
+For ruBERT:
+
+```python
+from cobaldclusterisation.rubert_baseline import run
+
+rubert_syntagrus = run(
+    data_dir=paths.corpus_dir,
+    hierarchy=paths.hierarchy_csv,
+    training_source="syntagrus",
+    syntagrus_dir="/content/UD_Russian-SynTagRus",
+    clone_syntagrus_if_missing=True,
+    output_dir="/content",
+    save_embeddings_to_drive=True,
+    drive_dir="/content/drive/MyDrive/cobald_outputs",
+    algorithms=["BisectingKMeans", "BIRCH", "KNNLeiden"],
+    n_clusters="data_semclass",
+    embedding_batch_size=32,
+    clustering_batch_size=4096,
+    device="cuda",
+    seed=42,
+    show_progress=True,
+)
+
+rubert_syntagrus["paths"]
+```
+
+For merged SynTagRus + CoBaLD training, change only the source:
+
+```python
+rubert_merged = run(
+    data_dir=paths.corpus_dir,
+    hierarchy=paths.hierarchy_csv,
+    training_source="syntagrus_cobald",
+    syntagrus_dir="/content/UD_Russian-SynTagRus",
+    clone_syntagrus_if_missing=True,
+    output_dir="/content",
+    n_clusters="data_semclass",
+    device="cuda",
+    show_progress=True,
+)
+```
+
+For SambaLingo and GigaChat, use the same parameters with their modules and
+usual memory settings. When the training source is not CoBaLD, IncrementalPCA
+is fitted on the training embeddings and reused to project CoBaLD before
+prediction.
+
+```python
+from cobaldclusterisation.sambalingo_baseline import run as run_sambalingo
+from cobaldclusterisation.gigachat_baseline import run as run_gigachat
+
+sambalingo_syntagrus = run_sambalingo(
+    data_dir=paths.corpus_dir,
+    hierarchy=paths.hierarchy_csv,
+    training_source="syntagrus",
+    syntagrus_dir="/content/UD_Russian-SynTagRus",
+    clone_syntagrus_if_missing=True,
+    output_dir="/content",
+    save_embeddings_to_drive=True,
+    drive_dir="/content/drive/MyDrive/cobald_outputs",
+    projection_n_components=256,
+    projection_batch_size=8192,
+    embedding_batch_size=1,
+    clustering_batch_size=4096,
+    device="cuda",
+    torch_dtype="float16",
+    show_progress=True,
+)
+
+gigachat_merged = run_gigachat(
+    data_dir=paths.corpus_dir,
+    hierarchy=paths.hierarchy_csv,
+    training_source="syntagrus_cobald",
+    syntagrus_dir="/content/UD_Russian-SynTagRus",
+    clone_syntagrus_if_missing=True,
+    output_dir="/content",
+    save_embeddings_to_drive=True,
+    drive_dir="/content/drive/MyDrive/cobald_outputs",
+    projection_n_components=256,
+    projection_batch_size=8192,
+    embedding_batch_size=1,
+    clustering_batch_size=4096,
+    device="cuda",
+    torch_dtype="bfloat16",
+    trust_remote_code=False,
+    show_progress=True,
+)
+```
+
+The returned dictionaries include `training_source`, `training_embedding_payload`,
+and `training_data_paths`. In `paths`, `training_embeddings` points to the
+SynTagRus-only or merged training embedding pickle. SambaLingo and GigaChat
+also return `training_clustering_features` when a separate training feature
+pickle is written. Pass `training_embeddings_path` to reuse a saved SynTagRus or
+merged training embedding pickle while still evaluating against the current
+CoBaLD `embeddings_path`.
+
 ## Colab Workflow 4: External FineWeb2 MiniBatch K-Means
 
 This workflow is separate from the hierarchical-clustering code. It trains
