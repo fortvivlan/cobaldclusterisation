@@ -1209,7 +1209,12 @@ def _build_result(
         hierarchy_depths=hierarchy_depths,
         random_state=cluster_config.random_state,
     )
-    summary = summarize_clusters(matrix, labels, cobald_tokens)
+    summary = summarize_clusters(
+        matrix,
+        labels,
+        cobald_tokens,
+        random_state=cluster_config.random_state,
+    )
     alignment = (
         hierarchy_alignment_table(
             labels,

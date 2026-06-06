@@ -544,6 +544,32 @@ def _format_value_counts(series: pd.Series, *, top_n: int | None = None) -> str:
     return "\n".join(f"{value}: {count}" for value, count in counts.items())
 
 
+def _format_semclass_lemma_examples(
+    tokens: pd.DataFrame,
+    *,
+    rng: np.random.Generator,
+    max_lemmas_per_semclass: int = 10,
+) -> str:
+    semclasses = tokens["SEMCLASS"].astype(str)
+    valid_semclasses = semclasses[~semclasses.isin(["", "_", "nan"])]
+    semclass_counts = valid_semclasses.value_counts()
+    lines: list[str] = []
+    for semclass in semclass_counts.index:
+        lemmas = (
+            tokens.loc[semclasses == semclass, "LEMMA"]
+            .astype(str)
+            .loc[lambda values: ~values.isin(["", "_", "nan"])]
+            .drop_duplicates()
+            .to_numpy(dtype=object)
+        )
+        if len(lemmas) == 0:
+            continue
+        if len(lemmas) > max_lemmas_per_semclass:
+            lemmas = rng.choice(lemmas, size=max_lemmas_per_semclass, replace=False)
+        lines.append(f"{semclass}: {', '.join(str(lemma) for lemma in lemmas)}")
+    return "\n".join(lines)
+
+
 def summarize_clusters(
     embeddings: np.ndarray,
     labels: Sequence[int],
@@ -551,6 +577,8 @@ def summarize_clusters(
     *,
     examples_per_cluster: int = 5,
     top_n: int = 8,
+    semclass_lemma_examples: int = 10,
+    random_state: int | None = 42,
 ) -> pd.DataFrame:
     """Create human-readable cluster names, examples, and label summaries."""
 
@@ -560,6 +588,7 @@ def summarize_clusters(
         raise ValueError("embeddings, labels, and tokens must have the same length")
 
     token_table = tokens.reset_index(drop=True)
+    rng = np.random.default_rng(random_state)
     rows: list[dict[str, object]] = []
     cluster_labels = sorted(
         np.unique(labels_array),
@@ -604,6 +633,11 @@ def summarize_clusters(
                     top_n=top_n,
                 ),
                 "semclasses": _format_value_counts(cluster_tokens["SEMCLASS"]),
+                "semclass_lemma_examples": _format_semclass_lemma_examples(
+                    cluster_tokens,
+                    rng=rng,
+                    max_lemmas_per_semclass=semclass_lemma_examples,
+                ),
                 "examples": "\n".join(examples),
             }
         )
@@ -647,7 +681,12 @@ def run_clustering(
             random_state=config.random_state,
         )
         progress.update(1)
-        summary = summarize_clusters(matrix, labels, tokens)
+        summary = summarize_clusters(
+            matrix,
+            labels,
+            tokens,
+            random_state=config.random_state,
+        )
         progress.update(1)
         hierarchy_alignment = (
             hierarchy_alignment_table(

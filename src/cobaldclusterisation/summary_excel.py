@@ -10,6 +10,23 @@ import pandas as pd
 from .scores import _run_part
 
 
+SEMCLASS_LEMMA_EXAMPLES_COLUMN = "semclass_lemma_examples"
+
+
+def _summary_for_excel(summary: pd.DataFrame) -> pd.DataFrame:
+    if SEMCLASS_LEMMA_EXAMPLES_COLUMN in summary.columns:
+        return summary
+
+    export_summary = summary.copy()
+    insert_at = (
+        export_summary.columns.get_loc("semclasses") + 1
+        if "semclasses" in export_summary.columns
+        else len(export_summary.columns)
+    )
+    export_summary.insert(insert_at, SEMCLASS_LEMMA_EXAMPLES_COLUMN, "")
+    return export_summary
+
+
 def write_cluster_summary_excel(
     results: Sequence[dict[str, object]],
     output_path: str | Path,
@@ -32,7 +49,11 @@ def write_cluster_summary_excel(
             algorithm = str(config["algorithm"])
             cluster_part = _run_part(config)
             sheet_name = f"{index}_{algorithm}_{cluster_part}"[:31]
-            result["summary"].to_excel(writer, sheet_name=sheet_name, index=False)
+            _summary_for_excel(result["summary"]).to_excel(
+                writer,
+                sheet_name=sheet_name,
+                index=False,
+            )
             worksheet = writer.sheets[sheet_name]
             for row in worksheet.iter_rows():
                 for cell in row:

@@ -67,6 +67,10 @@ def test_fit_evaluate_and_summarize_clusters() -> None:
     assert set(summary["token_count"]) == {2}
     assert set(summary["lemma_count"]) == {2}
     assert set(summary["semclasses"]) == {"ANIMAL: 2", "MONEY: 2"}
+    assert set(summary["semclass_lemma_examples"]) == {
+        "ANIMAL: кошка, кот",
+        "MONEY: банк, деньги",
+    }
     assert "\n" in "\n".join(summary["lemmas"])
 
 
@@ -149,6 +153,36 @@ def test_summarize_clusters_lists_all_lemmas_but_limits_top_forms() -> None:
     assert row["lemmas"] == "лемма1: 1\nлемма2: 1\nлемма3: 1"
     assert row["top_forms"] == "форма1: 1"
     assert row["semclasses"] == "CLASS_A: 2\nCLASS_B: 1"
+
+
+def test_summarize_clusters_samples_ten_lemmas_per_semclass() -> None:
+    class_a_lemmas = [f"a{i}" for i in range(12)]
+    class_b_lemmas = ["b0", "b1"]
+    tokens = pd.DataFrame(
+        {
+            "FORM": class_a_lemmas + class_b_lemmas,
+            "LEMMA": class_a_lemmas + class_b_lemmas,
+            "SEMCLASS": ["CLASS_A"] * 12 + ["CLASS_B"] * 2,
+            "context_text": ["context"] * 14,
+        }
+    )
+    embeddings = np.zeros((14, 2), dtype=np.float32)
+
+    summary = summarize_clusters(
+        embeddings,
+        [0] * 14,
+        tokens,
+        random_state=0,
+    )
+    examples = dict(
+        line.split(": ", maxsplit=1)
+        for line in summary.iloc[0]["semclass_lemma_examples"].splitlines()
+    )
+
+    class_a_examples = examples["CLASS_A"].split(", ")
+    assert len(class_a_examples) == 10
+    assert set(class_a_examples).issubset(set(class_a_lemmas))
+    assert examples["CLASS_B"] == "b0, b1"
 
 
 def test_hierarchy_ancestor_labels() -> None:
