@@ -159,6 +159,64 @@ def _fit_predict_knn_graph(
     return labels, model
 
 
+def _cluster_model(config: ClusterConfig) -> object | None:
+    algorithm = config.algorithm.lower()
+
+    if algorithm == "kmeans":
+        return KMeans(
+            n_clusters=config.n_clusters,
+            random_state=config.random_state,
+            n_init=config.n_init,
+        )
+    if algorithm == "minibatch_kmeans":
+        return MiniBatchKMeans(
+            n_clusters=config.n_clusters,
+            random_state=config.random_state,
+            batch_size=config.batch_size,
+            n_init=config.n_init,
+        )
+    if algorithm == "bisecting_kmeans":
+        return BisectingKMeans(
+            n_clusters=config.n_clusters,
+            random_state=config.random_state,
+            n_init=config.n_init,
+            bisecting_strategy=config.bisecting_strategy,
+        )
+    if algorithm == "birch":
+        return Birch(
+            threshold=config.birch_threshold,
+            branching_factor=config.birch_branching_factor,
+            n_clusters=config.n_clusters,
+            compute_labels=True,
+        )
+    if algorithm == "agglomerative":
+        kwargs: dict[str, object] = {
+            "n_clusters": config.n_clusters,
+            "linkage": config.linkage,
+        }
+        if config.linkage != "ward":
+            kwargs["metric"] = config.metric
+        return AgglomerativeClustering(**kwargs)
+    if algorithm == "hdbscan":
+        HDBSCAN = _require_hdbscan()
+        return HDBSCAN(
+            min_cluster_size=config.min_cluster_size,
+            min_samples=config.min_samples,
+            cluster_selection_epsilon=config.cluster_selection_epsilon,
+            cluster_selection_method=config.cluster_selection_method,
+            allow_single_cluster=config.allow_single_cluster,
+            n_jobs=config.n_jobs,
+            metric=config.metric,
+        )
+    if algorithm in {"knn_leiden", "knn_louvain"}:
+        return None
+    raise ValueError(
+        "Unknown algorithm. Use one of: kmeans, minibatch_kmeans, "
+        "bisecting_kmeans, birch, agglomerative, hdbscan, "
+        "knn_leiden, knn_louvain."
+    )
+
+
 def fit_predict_clusters(
     embeddings: np.ndarray,
     *,
@@ -170,63 +228,93 @@ def fit_predict_clusters(
     matrix = _as_float_matrix(embeddings, normalize=config.normalize)
     algorithm = config.algorithm.lower()
 
-    if algorithm == "kmeans":
-        model = KMeans(
-            n_clusters=config.n_clusters,
-            random_state=config.random_state,
-            n_init=config.n_init,
-        )
-    elif algorithm == "minibatch_kmeans":
-        model = MiniBatchKMeans(
-            n_clusters=config.n_clusters,
-            random_state=config.random_state,
-            batch_size=config.batch_size,
-            n_init=config.n_init,
-        )
-    elif algorithm == "bisecting_kmeans":
-        model = BisectingKMeans(
-            n_clusters=config.n_clusters,
-            random_state=config.random_state,
-            n_init=config.n_init,
-            bisecting_strategy=config.bisecting_strategy,
-        )
-    elif algorithm == "birch":
-        model = Birch(
-            threshold=config.birch_threshold,
-            branching_factor=config.birch_branching_factor,
-            n_clusters=config.n_clusters,
-            compute_labels=True,
-        )
-    elif algorithm == "agglomerative":
-        kwargs: dict[str, object] = {
-            "n_clusters": config.n_clusters,
-            "linkage": config.linkage,
-        }
-        if config.linkage != "ward":
-            kwargs["metric"] = config.metric
-        model = AgglomerativeClustering(**kwargs)
-    elif algorithm == "hdbscan":
-        HDBSCAN = _require_hdbscan()
-        model = HDBSCAN(
-            min_cluster_size=config.min_cluster_size,
-            min_samples=config.min_samples,
-            cluster_selection_epsilon=config.cluster_selection_epsilon,
-            cluster_selection_method=config.cluster_selection_method,
-            allow_single_cluster=config.allow_single_cluster,
-            n_jobs=config.n_jobs,
-            metric=config.metric,
-        )
-    elif algorithm in {"knn_leiden", "knn_louvain"}:
+    if algorithm in {"knn_leiden", "knn_louvain"}:
         return _fit_predict_knn_graph(matrix, config=config, method=algorithm)
-    else:
-        raise ValueError(
-            "Unknown algorithm. Use one of: kmeans, minibatch_kmeans, "
-            "bisecting_kmeans, birch, agglomerative, hdbscan, "
-            "knn_leiden, knn_louvain."
-        )
 
+    model = _cluster_model(config)
+    if model is None:
+        raise ValueError(f"Unknown algorithm: {config.algorithm}")
     labels = model.fit_predict(matrix)
     return np.asarray(labels, dtype=np.int64), model
+
+
+def _nearest_centroid_labels(
+    train_matrix: np.ndarray,
+    train_labels: np.ndarray,
+    eval_matrix: np.ndarray,
+    *,
+    metric: str,
+    batch_size: int,
+) -> np.ndarray:
+    valid_labels = np.asarray(
+        [label for label in np.unique(train_labels) if label != -1],
+        dtype=np.int64,
+    )
+    if len(valid_labels) == 0:
+        return np.full(len(eval_matrix), -1, dtype=np.int64)
+
+    centroids = np.vstack(
+        [
+            train_matrix[train_labels == label].mean(axis=0)
+            for label in valid_labels
+        ]
+    ).astype(np.float32, copy=False)
+
+    use_cosine = metric.lower() == "cosine"
+    if use_cosine:
+        centroids = l2_normalize(centroids).astype(np.float32, copy=False)
+        eval_working = l2_normalize(eval_matrix).astype(np.float32, copy=False)
+    else:
+        eval_working = eval_matrix
+
+    labels = np.empty(len(eval_matrix), dtype=np.int64)
+    batch_size = max(1, int(batch_size))
+    for start in range(0, len(eval_working), batch_size):
+        end = min(start + batch_size, len(eval_working))
+        batch = eval_working[start:end]
+        if use_cosine:
+            nearest = np.argmax(batch @ centroids.T, axis=1)
+        else:
+            distances = (
+                np.sum(batch * batch, axis=1, keepdims=True)
+                - 2.0 * (batch @ centroids.T)
+                + np.sum(centroids * centroids, axis=1)
+            )
+            nearest = np.argmin(distances, axis=1)
+        labels[start:end] = valid_labels[nearest]
+    return labels
+
+
+def fit_training_predict_evaluation(
+    training_embeddings: np.ndarray,
+    evaluation_embeddings: np.ndarray,
+    *,
+    config: ClusterConfig | None = None,
+) -> tuple[np.ndarray, object, str]:
+    """Fit clusters on training embeddings and assign labels to evaluation rows."""
+
+    config = config or ClusterConfig()
+    train_matrix = _as_float_matrix(training_embeddings, normalize=config.normalize)
+    eval_matrix = _as_float_matrix(evaluation_embeddings, normalize=config.normalize)
+    algorithm = config.algorithm.lower()
+
+    if algorithm in {"kmeans", "minibatch_kmeans", "bisecting_kmeans", "birch"}:
+        model = _cluster_model(config)
+        if model is None:
+            raise ValueError(f"Unknown algorithm: {config.algorithm}")
+        model.fit(train_matrix)
+        labels = model.predict(eval_matrix)
+        return np.asarray(labels, dtype=np.int64), model, "model_predict"
+
+    train_labels, model = fit_predict_clusters(training_embeddings, config=config)
+    labels = _nearest_centroid_labels(
+        train_matrix,
+        train_labels,
+        eval_matrix,
+        metric=config.metric,
+        batch_size=config.batch_size,
+    )
+    return labels, model, "nearest_training_centroid"
 
 
 def default_cluster_configs(
@@ -707,6 +795,86 @@ def run_clustering(
         "hierarchy_alignment": hierarchy_alignment,
         "model": model,
         "config": asdict(config),
+    }
+
+
+def run_clustering_with_training_data(
+    training_embeddings: np.ndarray,
+    evaluation_embeddings: np.ndarray,
+    evaluation_tokens: pd.DataFrame,
+    *,
+    config: ClusterConfig | None = None,
+    hierarchy: pd.DataFrame | str | Path | None = None,
+    hierarchy_depths: Sequence[int] = (1, 2, 3),
+    show_progress: bool = False,
+) -> dict[str, object]:
+    """Fit on training embeddings, label evaluation rows, and score them."""
+
+    config = config or ClusterConfig()
+    evaluation_matrix = _as_float_matrix(
+        evaluation_embeddings,
+        normalize=config.normalize,
+    )
+    run_label = (
+        f"{config.algorithm} train/apply min_cluster_size={config.min_cluster_size}"
+        if config.algorithm.lower() == "hdbscan"
+        else f"{config.algorithm} train/apply k={config.n_clusters}"
+    )
+    progress = tqdm(
+        total=3,
+        desc=run_label,
+        disable=not show_progress,
+        leave=False,
+    )
+
+    try:
+        labels, model, prediction_method = fit_training_predict_evaluation(
+            training_embeddings,
+            evaluation_embeddings,
+            config=config,
+        )
+        progress.update(1)
+        scores = evaluate_clusters(
+            evaluation_matrix,
+            labels,
+            tokens=evaluation_tokens,
+            hierarchy=hierarchy,
+            hierarchy_depths=hierarchy_depths,
+            random_state=config.random_state,
+        )
+        scores["training_rows"] = float(len(training_embeddings))
+        scores["prediction_rows"] = float(len(evaluation_embeddings))
+        progress.update(1)
+        summary = summarize_clusters(
+            evaluation_matrix,
+            labels,
+            evaluation_tokens,
+            random_state=config.random_state,
+        )
+        progress.update(1)
+        hierarchy_alignment = (
+            hierarchy_alignment_table(
+                labels,
+                evaluation_tokens,
+                hierarchy,
+                hierarchy_depths=hierarchy_depths,
+            )
+            if hierarchy is not None and "SEMCLASS" in evaluation_tokens.columns
+            else pd.DataFrame()
+        )
+    finally:
+        progress.close()
+
+    result_config = asdict(config)
+    result_config["training_rows"] = int(len(training_embeddings))
+    result_config["prediction_method"] = prediction_method
+    return {
+        "labels": labels,
+        "scores": scores,
+        "summary": summary,
+        "hierarchy_alignment": hierarchy_alignment,
+        "model": model,
+        "config": result_config,
     }
 
 

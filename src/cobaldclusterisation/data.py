@@ -331,6 +331,106 @@ def load_corpus(
     return sentences
 
 
+def parse_ud_conllu(
+    path: str | Path,
+    *,
+    split: str | None = "syntagrus",
+) -> list[Sentence]:
+    """Parse a standard 10-column UD CoNLL-U file into project sentences.
+
+    UD corpora such as Russian SynTagRus do not contain CoBaLD-specific
+    semantic annotation. The returned token rows keep FORM/LEMMA and syntactic
+    columns, set DEEPSLOT and SEMCLASS to ``_``, and can be passed through the
+    same embedding pipeline as CoBaLD sentences.
+    """
+
+    path = Path(path)
+    sentences: list[Sentence] = []
+    comments: list[str] = []
+    metadata: dict[str, str] = {}
+    token_rows: list[list[str]] = []
+    start_line = 1
+
+    def flush(end_line: int) -> None:
+        nonlocal comments, metadata, token_rows, start_line
+        if not comments and not token_rows:
+            start_line = end_line + 1
+            return
+        sentence_index = len(sentences)
+        sent_id = metadata.get("sent_id")
+        tokens = [
+            Token(
+                id=row[0],
+                form=row[1],
+                lemma=row[2],
+                upos=row[3],
+                xpos=row[4],
+                feats=row[5],
+                head=row[6],
+                deprel=row[7],
+                deps=row[8],
+                misc=row[9],
+                deepslot="_",
+                semclass="_",
+                sentence_id=sent_id,
+                split=split,
+                sentence_index=sentence_index,
+                token_index=token_index,
+            )
+            for token_index, row in enumerate(token_rows)
+        ]
+        sentences.append(
+            Sentence(
+                tokens=tokens,
+                metadata=dict(metadata),
+                comments=list(comments),
+                split=split,
+                index=sentence_index,
+            )
+        )
+        comments = []
+        metadata = {}
+        token_rows = []
+        start_line = end_line + 1
+
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.rstrip("\r\n")
+            if not line:
+                flush(line_number)
+                continue
+            if line.startswith("#"):
+                comments.append(line)
+                body = line[1:].strip()
+                if " = " in body:
+                    key, value = body.split(" = ", 1)
+                    metadata[key.strip()] = value.strip()
+                continue
+            columns = line.split("\t")
+            if len(columns) != 10:
+                raise ValueError(
+                    f"{path}:{line_number}: expected 10 UD CoNLL-U columns, "
+                    f"got {len(columns)}. Sentence started at line {start_line}."
+                )
+            token_rows.append(columns)
+
+    flush(line_number if "line_number" in locals() else 0)
+    return sentences
+
+
+def load_ud_corpus(
+    paths: Sequence[str | Path],
+    *,
+    split: str | None = "syntagrus",
+) -> list[Sentence]:
+    """Load and merge standard UD CoNLL-U files."""
+
+    sentences: list[Sentence] = []
+    for path in paths:
+        sentences.extend(parse_ud_conllu(path, split=split))
+    return sentences
+
+
 def iter_tokens(
     sentences: Iterable[Sentence],
     *,

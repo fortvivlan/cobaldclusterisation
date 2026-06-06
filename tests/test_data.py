@@ -7,6 +7,7 @@ from cobaldclusterisation.data import (
     iter_tokens,
     load_semclass_hierarchy,
     parse_conllu,
+    parse_ud_conllu,
 )
 from cobaldclusterisation.resources import resolve_hierarchy_path
 
@@ -61,6 +62,32 @@ def test_parse_conllu_rejects_wrong_column_count(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="expected 12 columns"):
         parse_conllu(path)
+
+
+def test_parse_ud_conllu_maps_syntagrus_without_semantics(tmp_path: Path) -> None:
+    path = tmp_path / "syntagrus.conllu"
+    path.write_text(
+        "\n".join(
+            [
+                "# sent_id = s1",
+                "# text = Кот спит.",
+                "1\tКот\tкот\tNOUN\t_\tAnimacy=Anim\t2\tnsubj\t_\t_",
+                "2\tспит\tспать\tVERB\t_\t_\t0\troot\t_\t_",
+                "3\t.\t.\tPUNCT\t_\t_\t2\tpunct\t_\t_",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    sentences = parse_ud_conllu(path)
+
+    assert len(sentences) == 1
+    sentence = sentences[0]
+    assert sentence.text == "Кот спит."
+    assert [token.form for token in sentence.embedding_targets()] == ["Кот", "спит"]
+    assert [token.lemma for token in sentence.tokens] == ["кот", "спать", "."]
+    assert {token.semclass for token in sentence.tokens} == {"_"}
 
 
 def test_load_semclass_hierarchy_reads_first_four_columns(tmp_path: Path) -> None:
