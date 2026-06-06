@@ -282,3 +282,51 @@ def test_run_trains_external_kmeans_and_scores_cobald(
     clustered = pd.read_csv(paths["clustered_tokens_csv"])
     assert "cluster" in clustered.columns
     assert len(clustered) == 8
+
+
+def test_run_accepts_multiple_cluster_counts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "CobaldRus"
+    data_dir.mkdir()
+    _write_conllu(data_dir / "train.conllu")
+    _write_conllu(data_dir / "dev.conllu")
+
+    monkeypatch.setattr(external, "_TransformerEmbedder", DummyEmbedder)
+    monkeypatch.setattr(
+        external,
+        "load_external_dataset_stream",
+        lambda **kwargs: [
+            {"text": "кошка кот кошка кот"},
+            {"text": "банк деньги банк деньги"},
+        ],
+    )
+
+    result = external.run(
+        data_dir=data_dir,
+        hierarchy=None,
+        max_train_tokens=8,
+        output_dir=tmp_path,
+        model_name="dummy",
+        model_label="dummy_external_multi",
+        embedding_batch_size=2,
+        kmeans_batch_size=4,
+        n_clusters=[1, 2],
+        device=None,
+        show_progress=False,
+    )
+
+    paths = result["paths"]
+    assert result["config"]["n_clusters"] == [1, 2]
+    assert [item["n_clusters"] for item in result["config"]["cluster_configs"]] == [
+        1,
+        2,
+    ]
+    assert [item["config"]["n_clusters"] for item in result["results"]] == [1, 2]
+    assert len(paths["kmeans_models"]) == 2
+    assert paths["kmeans_model"] == paths["kmeans_models"][0]
+    assert all(Path(path).exists() for path in paths["kmeans_models"])
+    assert len(paths["clustered_tokens_csvs"]) == 2
+    assert paths["clustered_tokens_csv"] == paths["clustered_tokens_csvs"][0]
+    assert all(Path(path).exists() for path in paths["clustered_tokens_csvs"])

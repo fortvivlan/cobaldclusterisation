@@ -88,10 +88,13 @@ class ExternalMiniBatchPaths:
 
     training_features: str
     cobald_features: str
-    kmeans_model: str
+    kmeans_model: str | None
+    kmeans_models: list[str]
     projection_model: str | None
-    clustered_tokens_csv: str
-    clustered_tokens_xlsx: str
+    clustered_tokens_csv: str | None
+    clustered_tokens_xlsx: str | None
+    clustered_tokens_csvs: list[str]
+    clustered_tokens_xlsxs: list[str]
     excel: str
     hierarchy_alignment_excel: str
     scores_csv: str
@@ -1147,16 +1150,37 @@ def _safe_label(value: str) -> str:
     return cleaned.strip("._") or "external_minibatch"
 
 
-def _resolve_cluster_count(
-    n_clusters: int | str,
+def _resolve_cluster_counts(
+    n_clusters: int | str | Sequence[int | str],
     *,
     tokens: pd.DataFrame,
-) -> int:
+) -> list[int]:
     if isinstance(n_clusters, str):
         if n_clusters == "data_semclass":
-            return infer_semclass_cluster_count(tokens)
-        return int(n_clusters)
-    return int(n_clusters)
+            return [infer_semclass_cluster_count(tokens)]
+        return [int(n_clusters)]
+    if isinstance(n_clusters, int):
+        return [int(n_clusters)]
+    counts = [
+        infer_semclass_cluster_count(tokens)
+        if isinstance(cluster_count, str) and cluster_count == "data_semclass"
+        else int(cluster_count)
+        for cluster_count in n_clusters
+    ]
+    if not counts:
+        raise ValueError("n_clusters sequence must not be empty")
+    return counts
+
+
+def _cluster_count_suffix(
+    *,
+    index: int,
+    n_clusters: int,
+    total: int,
+) -> str:
+    if total == 1:
+        return ""
+    return f"_run{index}_k{n_clusters}"
 
 
 def _save_pickle(value: object, path: Path) -> str:
@@ -1257,7 +1281,7 @@ def run(
     drive_dir: str | Path = DEFAULT_DRIVE_DIR,
     model_name: str = DEFAULT_RUBERT_MODEL,
     model_label: str = "rubert_base_external_fineweb2",
-    n_clusters: int | str = "data_semclass",
+    n_clusters: int | str | Sequence[int | str] = "data_semclass",
     embedding_batch_size: int = 8,
     kmeans_batch_size: int = 4096,
     max_length: int = 512,
@@ -1293,7 +1317,7 @@ def run(
         include_punctuation=False,
         include_empty=False,
     )
-    resolved_n_clusters = _resolve_cluster_count(
+    resolved_n_clusters = _resolve_cluster_counts(
         n_clusters,
         tokens=cobald_reference_tokens,
     )
@@ -1391,16 +1415,6 @@ def run(
         show_progress=show_progress,
     )
 
-    kmeans = fit_minibatch_kmeans_incremental(
-        training_features,
-        n_clusters=resolved_n_clusters,
-        batch_size=kmeans_batch_size,
-        random_state=seed,
-        n_init=n_init,
-        normalize=normalize_for_clustering,
-        show_progress=show_progress,
-    )
-
     cobald_features_path = artifact_dir / f"{safe_label}_cobald_features.dat"
     cobald_features, cobald_tokens = _write_cobald_features(
         embedder,
@@ -1415,32 +1429,64 @@ def run(
         show_progress=show_progress,
     )
 
-    labels = _predict_labels_in_batches(
-        kmeans,
-        cobald_features,
-        batch_size=kmeans_batch_size,
-        normalize=normalize_for_clustering,
-        show_progress=show_progress,
-    )
+    results: list[dict[str, object]] = []
+    kmeans_paths: list[str] = []
+    clustered_tokens_csvs: list[str] = []
+    clustered_tokens_xlsxs: list[str] = []
+    total_cluster_counts = len(resolved_n_clusters)
+    for run_index, cluster_count in enumerate(resolved_n_clusters, start=1):
+        suffix = _cluster_count_suffix(
+            index=run_index,
+            n_clusters=cluster_count,
+            total=total_cluster_counts,
+        )
+        kmeans = fit_minibatch_kmeans_incremental(
+            training_features,
+            n_clusters=cluster_count,
+            batch_size=kmeans_batch_size,
+            random_state=seed,
+            n_init=n_init,
+            normalize=normalize_for_clustering,
+            show_progress=show_progress,
+        )
 
-    cluster_config = ClusterConfig(
-        algorithm="minibatch_kmeans",
-        n_clusters=resolved_n_clusters,
-        random_state=seed,
-        normalize=normalize_for_clustering,
-        batch_size=kmeans_batch_size,
-        n_init=n_init,
-    )
-    result = _build_result(
-        cobald_features=cobald_features,
-        cobald_tokens=cobald_tokens,
-        labels=labels,
-        cluster_config=cluster_config,
-        hierarchy=hierarchy,
-        hierarchy_depths=hierarchy_depths,
-    )
-    result["model"] = kmeans
-    results = [result]
+        labels = _predict_labels_in_batches(
+            kmeans,
+            cobald_features,
+            batch_size=kmeans_batch_size,
+            normalize=normalize_for_clustering,
+            show_progress=show_progress,
+        )
+
+        cluster_config = ClusterConfig(
+            algorithm="minibatch_kmeans",
+            n_clusters=cluster_count,
+            random_state=seed,
+            normalize=normalize_for_clustering,
+            batch_size=kmeans_batch_size,
+            n_init=n_init,
+        )
+        result = _build_result(
+            cobald_features=cobald_features,
+            cobald_tokens=cobald_tokens,
+            labels=labels,
+            cluster_config=cluster_config,
+            hierarchy=hierarchy,
+            hierarchy_depths=hierarchy_depths,
+        )
+        result["model"] = kmeans
+        results.append(result)
+        kmeans_paths.append(
+            _save_pickle(kmeans, artifact_dir / f"{safe_label}_kmeans{suffix}.pkl")
+        )
+        clustered_tokens_csv, clustered_tokens_xlsx = _write_clustered_tokens(
+            cobald_tokens,
+            labels,
+            csv_path=output_dir / f"{safe_label}_cobald_clustered_tokens{suffix}.csv",
+            xlsx_path=output_dir / f"{safe_label}_cobald_clustered_tokens{suffix}.xlsx",
+        )
+        clustered_tokens_csvs.append(clustered_tokens_csv)
+        clustered_tokens_xlsxs.append(clustered_tokens_xlsx)
 
     excel_path = write_cluster_summary_excel(
         results,
@@ -1455,18 +1501,15 @@ def run(
         output_dir=output_dir,
         label=safe_label,
     )
-    clustered_tokens_csv, clustered_tokens_xlsx = _write_clustered_tokens(
-        cobald_tokens,
-        labels,
-        csv_path=output_dir / f"{safe_label}_cobald_clustered_tokens.csv",
-        xlsx_path=output_dir / f"{safe_label}_cobald_clustered_tokens.xlsx",
-    )
-
-    kmeans_path = _save_pickle(kmeans, artifact_dir / f"{safe_label}_kmeans.pkl")
     projection_path = (
         _save_pickle(projection, artifact_dir / f"{safe_label}_pca.pkl")
         if projection is not None
         else None
+    )
+    config_n_clusters: int | list[int] = (
+        resolved_n_clusters[0]
+        if len(resolved_n_clusters) == 1
+        else resolved_n_clusters
     )
     config_path = _save_config(
         {
@@ -1488,8 +1531,9 @@ def run(
             "model_name": model_name,
             "model_label": model_label,
             "embedding_config": asdict(embedding_config),
-            "n_clusters": resolved_n_clusters,
-            "cluster_config": asdict(cluster_config),
+            "n_clusters": config_n_clusters,
+            "cluster_config": results[0]["config"] if len(results) == 1 else None,
+            "cluster_configs": [result["config"] for result in results],
             "projection_n_components": projection_n_components,
             "projection_batch_size": projection_batch_size,
             "normalize_projection_input": normalize_projection_input,
@@ -1504,10 +1548,17 @@ def run(
     paths = ExternalMiniBatchPaths(
         training_features=str(training_features_path),
         cobald_features=str(cobald_features_path),
-        kmeans_model=kmeans_path,
+        kmeans_model=kmeans_paths[0] if kmeans_paths else None,
+        kmeans_models=kmeans_paths,
         projection_model=projection_path,
-        clustered_tokens_csv=clustered_tokens_csv,
-        clustered_tokens_xlsx=clustered_tokens_xlsx,
+        clustered_tokens_csv=(
+            clustered_tokens_csvs[0] if clustered_tokens_csvs else None
+        ),
+        clustered_tokens_xlsx=(
+            clustered_tokens_xlsxs[0] if clustered_tokens_xlsxs else None
+        ),
+        clustered_tokens_csvs=clustered_tokens_csvs,
+        clustered_tokens_xlsxs=clustered_tokens_xlsxs,
         excel=excel_path,
         hierarchy_alignment_excel=hierarchy_alignment_path,
         scores_csv=scores_csv,
