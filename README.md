@@ -4,6 +4,9 @@ This repository contains importable Python helpers for exploring whether
 embedding-based clustering can recover or approximate manually assigned CoBaLD
 semantic classes.
 
+For a structured Colab API reference with import paths, signatures, argument
+descriptions, and returned artifacts, see [documentation.md](documentation.md).
+
 The corpus and semantic hierarchy live in external GitHub repositories and are
 not committed here:
 
@@ -54,8 +57,8 @@ python scripts/semclass_stats.py --data-dir CobaldRus --hierarchy semantic-hiera
 
 This workflow installs the package, clones the external data repositories,
 generates `cointegrated/rubert-tiny2` embeddings, clusters the complete corpus,
-prints scores as `metric - result - reference note`, saves score text files, and
-writes an Excel workbook with cluster summaries under `/content/`.
+prints scores as `metric - result - reference note`, and writes Drive-facing
+result artifacts.
 
 ```python
 !git clone https://github.com/fortvivlan/cobaldclusterisation.git
@@ -72,6 +75,40 @@ from google.colab import drive
 
 drive.mount("/content/drive")
 ```
+
+## Output Handling
+
+When a baseline is run with the Colab default `output_dir="/content"` and a
+Drive root such as `/content/drive/MyDrive/cobald_outputs`, generated files are
+split by purpose:
+
+- Embedding and clustering feature pickle files are stored in
+  `/content/drive/MyDrive/cobald_outputs` when Drive saving is enabled.
+- Clustering result files are stored in
+  `/content/drive/MyDrive/cobald_outputs/results` unless `results_dir` is
+  passed explicitly.
+- Custom local runs with a non-default `output_dir` keep result files in that
+  directory unless `results_dir` is passed.
+
+Each clustering run now writes a reusable result pickle and a human-readable
+CoNLL-U Plus target-token export in addition to the Excel summaries and scores:
+
+- `{prefix}_summary.xlsx`
+- `{prefix}_scores.xlsx` and `{prefix}_scores.csv`
+- `{prefix}_*_scores.txt`
+- `{prefix}_hierarchy_alignment.xlsx`
+- `{prefix}_artifacts.pkl`
+- `{prefix}_{run}_annotated.conllu`
+
+The artifact pickle contains labels, annotated CoBaLD token tables, summaries,
+scores, hierarchy alignment, configs, and run metadata. The CoNLL-U Plus file
+uses the original CoBaLD token columns and adds `AUTO_SEMCLASS`, a readable
+automatic cluster name. Summary workbooks include up to 50 lemma examples per
+manual semantic class in `semclass_lemma_examples`.
+
+Output prefixes include the cluster counts, model label, and clustering family,
+for example `100cl_rubert_tiny2_Minibatch_Kmeans_summary.xlsx` or
+`100,200,300cl_rubert_tiny2_Hierarchical_summary.xlsx`.
 
 Clone or locate the corpus and hierarchy before importing `run`:
 
@@ -130,12 +167,15 @@ rubert_baseline = run(
 rubert_baseline["paths"]
 ```
 
-`rubert_baseline["paths"]["excel"]` points to the `.xlsx` summary file under
-`/content/`. Score tables are printed and also saved as `.txt` files listed in
+`rubert_baseline["paths"]["excel"]` points to the prefixed `.xlsx` summary
+file. Score tables are printed and also saved as `.txt` files listed in
 `rubert_baseline["paths"]["scores_txt"]`. Metric-row score tables are saved as
 CSV and Excel files at `rubert_baseline["paths"]["scores_csv"]` and
 `rubert_baseline["paths"]["scores_xlsx"]`. Per-cluster hierarchy alignment
 tables are saved at `rubert_baseline["paths"]["hierarchy_alignment_excel"]`.
+Reusable labels and annotated token tables are saved at
+`rubert_baseline["paths"]["artifacts_pickle"]`; human-readable CoNLL-U Plus
+exports are listed in `rubert_baseline["paths"]["annotated_conllu_plus_files"]`.
 
 To rerun clustering from a saved embedding pickle without loading the model
 again, pass `embeddings_path`:
@@ -175,7 +215,6 @@ rubert_no_punct = run(
     n_clusters="data_semclass",
     output_dir="/content",
     embedding_filename="rubert_tiny2_cobald_no_punct_context.pkl",
-    excel_filename="rubert_tiny2_no_punct_cluster_summaries.xlsx",
     label="rubert_tiny2_no_punct",
     embedding_batch_size=32,
     device="cuda",
@@ -231,8 +270,9 @@ sambalingo_baseline["paths"]
 `sambalingo_baseline["paths"]["embeddings"]` points to the full SambaLingo
 embedding pickle. `sambalingo_baseline["paths"]["clustering_features"]` points
 to the reduced IncrementalPCA feature pickle used for clustering. The Excel
-summary, metric-row score CSV/XLSX, and per-run score text files are saved
-under `/content/`.
+summary, metric-row score CSV/XLSX, hierarchy alignment, reusable artifact
+pickle, and CoNLL-U Plus exports are saved under the resolved results
+directory.
 
 Pass `embeddings_path` to skip SambaLingo embedding generation and rerun only
 projection, clustering, and exports from a saved full-embedding pickle.
@@ -325,8 +365,9 @@ gigachat_baseline["paths"]
 `gigachat_baseline["paths"]["embeddings"]` points to the full GigaChat3
 embedding pickle. `gigachat_baseline["paths"]["clustering_features"]` points to
 the reduced IncrementalPCA feature pickle used for clustering. The Excel
-summary, metric-row score CSV/XLSX, and per-run score text files are saved
-under `/content/`.
+summary, metric-row score CSV/XLSX, hierarchy alignment, reusable artifact
+pickle, and CoNLL-U Plus exports are saved under the resolved results
+directory.
 Agglomerative clustering has the same full-corpus guard as the SambaLingo
 baseline.
 
@@ -560,8 +601,9 @@ external_gigachat = run_gigachat_external(
 ```
 
 Outputs include CoBaLD cluster summaries, hierarchy alignment, score CSV/XLSX,
-a token-level CoBaLD table with the predicted `cluster` column, the fitted
-K-Means model, optional PCA model, and a JSON run config.
+reusable artifact pickle, annotated CoNLL-U Plus files, a compatibility
+token-level CoBaLD CSV/XLSX table with the predicted `cluster` column, the
+fitted K-Means model, optional PCA model, and a JSON run config.
 
 ## CLI Examples
 
@@ -589,10 +631,16 @@ cobald cluster outputs/embeddings/rubert_tiny2.pkl \
   --hierarchy semantic-hierarchy \
   --algorithms bisecting_kmeans birch knn_leiden \
   --n-clusters data_semclass \
-  --output outputs/clusters/scalable_defaults.pkl
+  --output outputs/clusters/scalable_defaults.pkl \
+  --results-dir outputs/clusters/results \
+  --label rubert_tiny2
 ```
 
 The clustering CLI shows progress by default. Add `--no-progress` for quieter
-batch runs. kNN graph clustering requires the optional `graph` extra.
+batch runs. kNN graph clustering requires the optional `graph` extra. The CLI
+still saves the raw result pickle at `--output`; summary workbooks, score
+tables, hierarchy alignment, reusable artifact pickle, and annotated CoNLL-U
+Plus files are written to `--results-dir` when it is provided, otherwise next
+to the raw result pickle.
 
 Generated outputs under `outputs/` and pickle files are ignored by Git.
