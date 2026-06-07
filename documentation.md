@@ -39,6 +39,8 @@ Result files include:
 
 - `{prefix}_summary.xlsx`: short cluster summaries. `semclass_lemma_examples`
   contains up to 50 lemma examples per semantic class.
+- `{prefix}_semclass_cluster_map.xlsx`: semantic-class rows with the automatic
+  clusters containing each class and the number of such clusters.
 - `{prefix}_scores.xlsx` and `{prefix}_scores.csv`: metric-row score tables.
 - `{prefix}_*_scores.txt`: printed score tables for individual runs.
 - `{prefix}_hierarchy_alignment.xlsx`: per-cluster alignment to hierarchy
@@ -636,6 +638,7 @@ from cobaldclusterisation.cluster_exports import (
     annotate_tokens,
     default_results_dir,
     output_prefix,
+    semclass_cluster_map_table,
     write_clustering_outputs,
     write_conllu_plus,
 )
@@ -648,6 +651,8 @@ Dataclass returned by `write_clustering_outputs`.
 Arguments:
 
 - `excel`: summary workbook path.
+- `semclass_cluster_map_excel`: semantic-class to automatic-cluster workbook
+  path.
 - `hierarchy_alignment_excel`: hierarchy alignment workbook path.
 - `scores_csv`: score CSV path.
 - `scores_xlsx`: score workbook path.
@@ -697,6 +702,20 @@ Arguments:
 
 Returns: `ClusteringExportPaths`.
 
+### `semclass_cluster_map_table(annotated_tokens, *, result)`
+
+Build the semantic-class to automatic-cluster table used by
+`{prefix}_semclass_cluster_map.xlsx`.
+
+Arguments:
+
+- `annotated_tokens`: token DataFrame containing `SEMCLASS` and numeric
+  `cluster` columns, usually produced by `annotate_tokens`.
+- `result`: clustering result dictionary containing `summary`; `cluster_name`
+  values are used to format cluster names as `cluster_id:cluster_name`.
+
+Returns: DataFrame with `semclass`, `automatic_clusters`, and `cluster_count`.
+
 ### `annotate_tokens(tokens, labels, *, result)`
 
 Attach automatic cluster labels to a token DataFrame.
@@ -737,6 +756,7 @@ from cobaldclusterisation.scores import (
 from cobaldclusterisation.summary_excel import (
     write_cluster_summary_excel,
     write_hierarchy_alignment_excel,
+    write_semclass_cluster_map_excel,
 )
 ```
 
@@ -812,6 +832,18 @@ Write all cluster summaries to one workbook.
 Arguments:
 
 - `results`: result dictionaries containing `summary` and `config`.
+- `output_path`: workbook path.
+
+Returns: output path string.
+
+### `write_semclass_cluster_map_excel(tables, output_path)`
+
+Write semantic-class to automatic-cluster map sheets to one workbook.
+
+Arguments:
+
+- `tables`: sequence of `(result, table)` pairs, where each table is usually
+  produced by `semclass_cluster_map_table`.
 - `output_path`: workbook path.
 
 Returns: output path string.

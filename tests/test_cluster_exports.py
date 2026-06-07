@@ -7,6 +7,7 @@ import pandas as pd
 from cobaldclusterisation.cluster_exports import (
     annotate_tokens,
     output_prefix,
+    semclass_cluster_map_table,
     write_clustering_outputs,
 )
 
@@ -73,6 +74,35 @@ def test_annotate_tokens_uses_readable_auto_class_names() -> None:
     ]
 
 
+def test_semclass_cluster_map_table_lists_clusters_per_semclass() -> None:
+    result = {
+        **_result(),
+        "labels": np.array([0, 1, 1, 2], dtype=np.int64),
+        "summary": pd.DataFrame(
+            {
+                "cluster": [0, 1, 2],
+                "cluster_name": ["кошка", "банк", "деньги"],
+            }
+        ),
+    }
+    annotated = annotate_tokens(_tokens(), result["labels"], result=result)
+
+    table = semclass_cluster_map_table(annotated, result=result)
+
+    assert table.to_dict("records") == [
+        {
+            "semclass": "ANIMAL",
+            "automatic_clusters": "0:кошка\n1:банк",
+            "cluster_count": 2,
+        },
+        {
+            "semclass": "MONEY",
+            "automatic_clusters": "1:банк\n2:деньги",
+            "cluster_count": 2,
+        },
+    ]
+
+
 def test_write_clustering_outputs_saves_pickle_and_conllu_plus(
     tmp_path: Path,
 ) -> None:
@@ -84,9 +114,14 @@ def test_write_clustering_outputs_saves_pickle_and_conllu_plus(
     )
 
     assert Path(paths.excel).name == "100cl_rubert_tiny2_Hierarchical_summary.xlsx"
+    assert (
+        Path(paths.semclass_cluster_map_excel).name
+        == "100cl_rubert_tiny2_Hierarchical_semclass_cluster_map.xlsx"
+    )
     assert Path(paths.scores_xlsx).name == "100cl_rubert_tiny2_Hierarchical_scores.xlsx"
     assert Path(paths.artifacts_pickle).exists()
     assert paths.annotated_conllu_plus is not None
+    assert Path(paths.semclass_cluster_map_excel).exists()
 
     with Path(paths.artifacts_pickle).open("rb") as handle:
         payload = pickle.load(handle)

@@ -126,6 +126,7 @@ def _cmd_cluster(args: argparse.Namespace) -> None:
     print(f"runs={len(results)}")
     print(f"saved={output_path}")
     print(f"scores={export_paths.scores_xlsx}")
+    print(f"semclass_cluster_map={export_paths.semclass_cluster_map_excel}")
     print(f"artifacts={export_paths.artifacts_pickle}")
 
 

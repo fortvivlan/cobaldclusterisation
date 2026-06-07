@@ -47,6 +47,7 @@ class SambaLingoBaselinePaths:
     training_embeddings: str | None
     training_clustering_features: str | None
     excel: str
+    semclass_cluster_map_excel: str
     hierarchy_alignment_excel: str
     scores_csv: str
     scores_xlsx: str
@@ -588,6 +589,7 @@ def run(
             else None
         ),
         excel=export_paths.excel,
+        semclass_cluster_map_excel=export_paths.semclass_cluster_map_excel,
         hierarchy_alignment_excel=export_paths.hierarchy_alignment_excel,
         scores_csv=export_paths.scores_csv,
         scores_xlsx=export_paths.scores_xlsx,

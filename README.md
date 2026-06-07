@@ -96,6 +96,7 @@ Each clustering run now writes a reusable result pickle and a human-readable
 CoNLL-U Plus target-token export in addition to the Excel summaries and scores:
 
 - `{prefix}_summary.xlsx`
+- `{prefix}_semclass_cluster_map.xlsx`
 - `{prefix}_scores.xlsx` and `{prefix}_scores.csv`
 - `{prefix}_*_scores.txt`
 - `{prefix}_hierarchy_alignment.xlsx`
@@ -107,6 +108,8 @@ scores, hierarchy alignment, configs, and run metadata. The CoNLL-U Plus file
 uses the original CoBaLD token columns and adds `AUTO_SEMCLASS`, a readable
 automatic cluster name. Summary workbooks include up to 50 lemma examples per
 manual semantic class in `semclass_lemma_examples`.
+The semantic-class cluster map workbook lists each manual `SEMCLASS`, the
+automatic clusters containing that class, and the number of such clusters.
 
 Output prefixes include the cluster counts, model label, and clustering family,
 for example `100cl_rubert_tiny2_Minibatch_Kmeans_summary.xlsx` or
@@ -170,7 +173,9 @@ rubert_baseline["paths"]
 ```
 
 `rubert_baseline["paths"]["excel"]` points to the prefixed `.xlsx` summary
-file. Score tables are printed and also saved as `.txt` files listed in
+file, and `rubert_baseline["paths"]["semclass_cluster_map_excel"]` points to
+the semantic-class to automatic-cluster workbook. Score tables are printed and
+also saved as `.txt` files listed in
 `rubert_baseline["paths"]["scores_txt"]`. Metric-row score tables are saved as
 CSV and Excel files at `rubert_baseline["paths"]["scores_csv"]` and
 `rubert_baseline["paths"]["scores_xlsx"]`. Per-cluster hierarchy alignment

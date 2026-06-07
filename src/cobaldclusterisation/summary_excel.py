@@ -97,3 +97,37 @@ def write_hierarchy_alignment_excel(
         if not wrote_sheet:
             pd.DataFrame().to_excel(writer, sheet_name="alignment", index=False)
     return str(output_path)
+
+
+def write_semclass_cluster_map_excel(
+    tables: Sequence[tuple[dict[str, object], pd.DataFrame]],
+    output_path: str | Path,
+) -> str:
+    """Write semantic-class to automatic-cluster maps for all clustering runs."""
+
+    try:
+        from openpyxl.styles import Alignment
+    except ImportError as exc:
+        raise ImportError(
+            "Excel export requires openpyxl. Install it in Colab with: "
+            "pip install openpyxl"
+        ) from exc
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    wrote_sheet = False
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        for index, (result, table) in enumerate(tables):
+            config = result["config"]
+            algorithm = str(config["algorithm"])
+            sheet_name = f"{index}_{algorithm}_{_run_part(config)}"[:31]
+            table.to_excel(writer, sheet_name=sheet_name, index=False)
+            worksheet = writer.sheets[sheet_name]
+            for row in worksheet.iter_rows():
+                for cell in row:
+                    cell.alignment = Alignment(wrap_text=True, vertical="top")
+            worksheet.freeze_panes = "A2"
+            wrote_sheet = True
+        if not wrote_sheet:
+            pd.DataFrame().to_excel(writer, sheet_name="semclass_clusters", index=False)
+    return str(output_path)

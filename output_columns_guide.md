@@ -39,6 +39,26 @@ class.
 `examples`: A few token examples with their manual `SEMCLASS` and sentence
 context. These examples are for orientation only.
 
+## SEMCLASS CLUSTER MAP
+
+File pattern: `{prefix}_semclass_cluster_map.xlsx`
+
+Each sheet corresponds to one clustering run. This workbook starts from the
+manual semantic classes and shows which automatic clusters contain examples of
+each class.
+
+`semclass`: Manual CoBaLD `SEMCLASS` label.
+
+`automatic_clusters`: Automatic clusters that contain at least one token with
+this manual semantic class. Values are newline separated inside the Excel cell.
+Each value has the form `cluster_id:cluster_name`, for example `0:банк`.
+`cluster_name` is the automatic readable cluster name derived from the token
+closest to the cluster centroid; it is not a human-approved class name.
+
+`cluster_count`: Number of distinct automatic clusters listed in
+`automatic_clusters`. For example, if `BEING` appears in clusters `0`, `1`,
+and `2`, this value is `3`.
+
 ## SCORES
 
 File patterns: `{prefix}_scores.xlsx`, `{prefix}_scores.csv`,

@@ -13,7 +13,11 @@ import pandas as pd
 
 from .data import CONLLU_COLUMNS
 from .scores import _run_part, write_scores
-from .summary_excel import write_cluster_summary_excel, write_hierarchy_alignment_excel
+from .summary_excel import (
+    write_cluster_summary_excel,
+    write_hierarchy_alignment_excel,
+    write_semclass_cluster_map_excel,
+)
 
 
 HIERARCHICAL_ALGORITHMS = {"bisecting_kmeans", "birch", "knn_leiden"}
@@ -26,6 +30,7 @@ class ClusteringExportPaths:
     """Drive-facing clustering result paths."""
 
     excel: str
+    semclass_cluster_map_excel: str
     hierarchy_alignment_excel: str
     scores_csv: str
     scores_xlsx: str
@@ -93,9 +98,13 @@ def write_clustering_outputs(
 
     runs: list[dict[str, object]] = []
     conllu_paths: list[str] = []
+    semclass_cluster_map_tables: list[tuple[dict[str, object], pd.DataFrame]] = []
     for index, result in enumerate(results):
         labels = np.asarray(result["labels"], dtype=np.int64)
         annotated = annotate_tokens(tokens, labels, result=result)
+        semclass_cluster_map_tables.append(
+            (result, semclass_cluster_map_table(annotated, result=result))
+        )
         conllu_path = output_path / (
             f"{prefix}_{index}_{_result_algorithm(result)}_"
             f"{_run_part(result.get('config', {}))}_annotated.conllu"
@@ -127,8 +136,14 @@ def write_clustering_outputs(
             protocol=pickle.HIGHEST_PROTOCOL,
         )
 
+    semclass_cluster_map_path = write_semclass_cluster_map_excel(
+        semclass_cluster_map_tables,
+        output_path / f"{prefix}_semclass_cluster_map.xlsx",
+    )
+
     return ClusteringExportPaths(
         excel=excel_path,
+        semclass_cluster_map_excel=semclass_cluster_map_path,
         hierarchy_alignment_excel=hierarchy_alignment_path,
         scores_csv=scores_csv,
         scores_xlsx=scores_xlsx,
@@ -159,6 +174,53 @@ def annotate_tokens(
     annotated.insert(0, "cluster", labels_array)
     annotated[CONLLU_PLUS_AUTO_COLUMN] = auto_labels
     return annotated
+
+
+def semclass_cluster_map_table(
+    annotated_tokens: pd.DataFrame,
+    *,
+    result: dict[str, object],
+) -> pd.DataFrame:
+    """Map each gold semantic class to the automatic clusters containing it."""
+
+    required_columns = {"SEMCLASS", "cluster"}
+    missing = sorted(required_columns - set(annotated_tokens.columns))
+    if missing:
+        raise ValueError(f"annotated_tokens is missing required columns: {missing}")
+
+    display_names = _cluster_display_names(result)
+    rows: list[dict[str, object]] = []
+    semclasses = (
+        annotated_tokens["SEMCLASS"]
+        .dropna()
+        .map(str)
+        .loc[lambda values: ~values.isin(["", "_", "nan"])]
+        .drop_duplicates()
+        .sort_values()
+    )
+    for semclass in semclasses:
+        clusters = (
+            annotated_tokens.loc[annotated_tokens["SEMCLASS"].map(str) == semclass, "cluster"]
+            .dropna()
+            .map(int)
+            .drop_duplicates()
+            .sort_values()
+            .tolist()
+        )
+        rows.append(
+            {
+                "semclass": semclass,
+                "automatic_clusters": "\n".join(
+                    display_names.get(cluster, str(cluster)) for cluster in clusters
+                ),
+                "cluster_count": len(clusters),
+            }
+        )
+
+    return pd.DataFrame(
+        rows,
+        columns=["semclass", "automatic_clusters", "cluster_count"],
+    )
 
 
 def write_conllu_plus(tokens: pd.DataFrame, output_path: str | Path) -> str:
@@ -216,6 +278,18 @@ def _cluster_label_names(result: dict[str, object]) -> dict[int, str]:
         names[cluster] = (
             f"cluster_{cluster}:{cluster_name}" if cluster_name else f"cluster_{cluster}"
         )
+    return names
+
+
+def _cluster_display_names(result: dict[str, object]) -> dict[int, str]:
+    summary = result.get("summary")
+    if not isinstance(summary, pd.DataFrame) or "cluster" not in summary.columns:
+        return {}
+    names: dict[int, str] = {}
+    for _, row in summary.iterrows():
+        cluster = int(row["cluster"])
+        cluster_name = _clean_auto_label(row.get("cluster_name", ""))
+        names[cluster] = f"{cluster}:{cluster_name}" if cluster_name else str(cluster)
     return names
 
 
