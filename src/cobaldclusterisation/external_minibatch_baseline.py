@@ -17,6 +17,7 @@ from sklearn.decomposition import IncrementalPCA
 from sklearn.preprocessing import normalize as l2_normalize
 from tqdm.auto import tqdm
 
+from .cluster_exports import default_results_dir, write_clustering_outputs
 from .clustering import (
     ClusterConfig,
     evaluate_clusters,
@@ -100,6 +101,9 @@ class ExternalMiniBatchPaths:
     scores_csv: str
     scores_xlsx: str
     scores_txt: list[str]
+    artifacts_pickle: str
+    annotated_conllu_plus: str | None
+    annotated_conllu_plus_files: list[str]
     config_json: str
 
 
@@ -1277,6 +1281,7 @@ def run(
     max_documents: int | None = None,
     shuffle_buffer_size: int = 10_000,
     output_dir: str | Path = DEFAULT_COLAB_DIR,
+    results_dir: str | Path | None = None,
     save_models_to_drive: bool = False,
     drive_dir: str | Path = DEFAULT_DRIVE_DIR,
     model_name: str = DEFAULT_RUBERT_MODEL,
@@ -1308,6 +1313,16 @@ def run(
     output_dir.mkdir(parents=True, exist_ok=True)
     artifact_dir = Path(drive_dir) if save_models_to_drive else output_dir
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    result_output_dir = (
+        Path(results_dir)
+        if results_dir is not None
+        else default_results_dir(
+            output_dir,
+            drive_dir,
+            default_output_dir=DEFAULT_COLAB_DIR,
+        )
+    )
+    result_output_dir.mkdir(parents=True, exist_ok=True)
     safe_label = _safe_label(model_label)
     resolved_external_source = _normalize_external_source(external_source)
 
@@ -1482,24 +1497,31 @@ def run(
         clustered_tokens_csv, clustered_tokens_xlsx = _write_clustered_tokens(
             cobald_tokens,
             labels,
-            csv_path=output_dir / f"{safe_label}_cobald_clustered_tokens{suffix}.csv",
-            xlsx_path=output_dir / f"{safe_label}_cobald_clustered_tokens{suffix}.xlsx",
+            csv_path=(
+                result_output_dir / f"{safe_label}_cobald_clustered_tokens{suffix}.csv"
+            ),
+            xlsx_path=(
+                result_output_dir
+                / f"{safe_label}_cobald_clustered_tokens{suffix}.xlsx"
+            ),
         )
         clustered_tokens_csvs.append(clustered_tokens_csv)
         clustered_tokens_xlsxs.append(clustered_tokens_xlsx)
 
-    excel_path = write_cluster_summary_excel(
+    export_paths = write_clustering_outputs(
         results,
-        output_dir / f"{safe_label}_cluster_summaries.xlsx",
-    )
-    hierarchy_alignment_path = write_hierarchy_alignment_excel(
-        results,
-        output_dir / f"{safe_label}_hierarchy_alignment.xlsx",
-    )
-    scores_csv, scores_xlsx, scores_txt = _write_scores(
-        results,
-        output_dir=output_dir,
+        cobald_tokens,
+        output_dir=result_output_dir,
         label=safe_label,
+        family="Minibatch_Kmeans",
+        metadata={
+            "external_source": resolved_external_source,
+            "model_name": model_name,
+            "model_label": model_label,
+            "external_training_tokens": external_token_count,
+            "external_contexts": len(external_chunks),
+            "hierarchy_depths": list(hierarchy_depths),
+        },
     )
     projection_path = (
         _save_pickle(projection, artifact_dir / f"{safe_label}_pca.pkl")
@@ -1542,7 +1564,7 @@ def run(
             "max_context_word_tokens": max_context_word_tokens,
             "hierarchy_depths": list(hierarchy_depths),
         },
-        output_dir / f"{safe_label}_config.json",
+        result_output_dir / f"{safe_label}_config.json",
     )
 
     paths = ExternalMiniBatchPaths(
@@ -1559,11 +1581,14 @@ def run(
         ),
         clustered_tokens_csvs=clustered_tokens_csvs,
         clustered_tokens_xlsxs=clustered_tokens_xlsxs,
-        excel=excel_path,
-        hierarchy_alignment_excel=hierarchy_alignment_path,
-        scores_csv=scores_csv,
-        scores_xlsx=scores_xlsx,
-        scores_txt=scores_txt,
+        excel=export_paths.excel,
+        hierarchy_alignment_excel=export_paths.hierarchy_alignment_excel,
+        scores_csv=export_paths.scores_csv,
+        scores_xlsx=export_paths.scores_xlsx,
+        scores_txt=export_paths.scores_txt,
+        artifacts_pickle=export_paths.artifacts_pickle,
+        annotated_conllu_plus=export_paths.annotated_conllu_plus,
+        annotated_conllu_plus_files=export_paths.annotated_conllu_plus_files,
         config_json=config_path,
     )
     return {

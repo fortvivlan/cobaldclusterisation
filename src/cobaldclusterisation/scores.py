@@ -109,7 +109,7 @@ def scores_to_metric_dataframe(results: Sequence[dict[str, object]]) -> pd.DataF
 
 
 def _safe_filename(value: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
+    cleaned = re.sub(r"[^A-Za-z0-9_,.-]+", "_", value.strip())
     return cleaned.strip("._") or "run"
 
 

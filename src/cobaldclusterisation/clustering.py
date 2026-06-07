@@ -665,7 +665,7 @@ def summarize_clusters(
     *,
     examples_per_cluster: int = 5,
     top_n: int = 8,
-    semclass_lemma_examples: int = 10,
+    semclass_lemma_examples: int = 50,
     random_state: int | None = 42,
 ) -> pd.DataFrame:
     """Create human-readable cluster names, examples, and label summaries."""

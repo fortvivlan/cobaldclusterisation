@@ -155,22 +155,22 @@ def test_summarize_clusters_lists_all_lemmas_but_limits_top_forms() -> None:
     assert row["semclasses"] == "CLASS_A: 2\nCLASS_B: 1"
 
 
-def test_summarize_clusters_samples_ten_lemmas_per_semclass() -> None:
-    class_a_lemmas = [f"a{i}" for i in range(12)]
+def test_summarize_clusters_samples_fifty_lemmas_per_semclass() -> None:
+    class_a_lemmas = [f"a{i}" for i in range(52)]
     class_b_lemmas = ["b0", "b1"]
     tokens = pd.DataFrame(
         {
             "FORM": class_a_lemmas + class_b_lemmas,
             "LEMMA": class_a_lemmas + class_b_lemmas,
-            "SEMCLASS": ["CLASS_A"] * 12 + ["CLASS_B"] * 2,
-            "context_text": ["context"] * 14,
+            "SEMCLASS": ["CLASS_A"] * 52 + ["CLASS_B"] * 2,
+            "context_text": ["context"] * 54,
         }
     )
-    embeddings = np.zeros((14, 2), dtype=np.float32)
+    embeddings = np.zeros((54, 2), dtype=np.float32)
 
     summary = summarize_clusters(
         embeddings,
-        [0] * 14,
+        [0] * 54,
         tokens,
         random_state=0,
     )
@@ -180,7 +180,7 @@ def test_summarize_clusters_samples_ten_lemmas_per_semclass() -> None:
     )
 
     class_a_examples = examples["CLASS_A"].split(", ")
-    assert len(class_a_examples) == 10
+    assert len(class_a_examples) == 50
     assert set(class_a_examples).issubset(set(class_a_lemmas))
     assert examples["CLASS_B"] == "b0, b1"
 

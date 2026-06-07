@@ -14,6 +14,7 @@ from sklearn.preprocessing import normalize as l2_normalize
 from tqdm.auto import tqdm
 
 from .baseline_payloads import load_saved_embedding_payload
+from .cluster_exports import default_results_dir, write_clustering_outputs
 from .clustering import ClusterConfig, run_clustering, run_clustering_with_training_data
 from .embeddings import (
     EmbeddingConfig,
@@ -50,6 +51,9 @@ class SambaLingoBaselinePaths:
     scores_csv: str
     scores_xlsx: str
     scores_txt: list[str]
+    artifacts_pickle: str
+    annotated_conllu_plus: str | None
+    annotated_conllu_plus_files: list[str]
 
 
 def _release_cuda_memory() -> None:
@@ -327,6 +331,7 @@ def run(
     algorithms: Sequence[str] = ("BisectingKMeans", "BIRCH", "KNNLeiden"),
     n_clusters: int | str | Sequence[int] = "data_semclass",
     output_dir: str | Path = DEFAULT_COLAB_DIR,
+    results_dir: str | Path | None = None,
     save_embeddings_to_drive: bool = False,
     drive_dir: str | Path = DEFAULT_DRIVE_DIR,
     embedding_filename: str = "sambalingo_russian_base_cobald.pkl",
@@ -468,6 +473,7 @@ def run(
         training_clustering_features_path = save_embeddings_pickle(
             training_clustering_payload,
             output_dir / training_clustering_features_filename,
+            drive_dir=drive_output_dir,
         )
         training_clustering_payload["saved_path"] = str(
             training_clustering_features_path
@@ -475,6 +481,7 @@ def run(
     clustering_features_path = save_embeddings_pickle(
         clustering_payload,
         output_dir / clustering_features_filename,
+        drive_dir=drive_output_dir,
     )
     clustering_payload["saved_path"] = str(clustering_features_path)
     print(
@@ -544,15 +551,27 @@ def run(
                 )
             )
 
-    excel_path = write_cluster_summary_excel(results, output_dir / excel_filename)
-    hierarchy_alignment_path = write_hierarchy_alignment_excel(
-        results,
-        output_dir / hierarchy_alignment_filename,
+    result_output_dir = (
+        Path(results_dir)
+        if results_dir is not None
+        else default_results_dir(
+            output_dir,
+            drive_dir,
+            default_output_dir=DEFAULT_COLAB_DIR,
+        )
     )
-    scores_csv, scores_xlsx, scores_txt = _write_scores(
+    export_paths = write_clustering_outputs(
         results,
-        output_dir=output_dir,
+        clustering_payload["tokens"],
+        output_dir=result_output_dir,
         label=label,
+        metadata={
+            "model_name": MODEL_NAME,
+            "training_source": resolved_training_source,
+            "training_data_paths": training_data_paths,
+            "projection_n_components": projection_n_components,
+            "hierarchy_depths": list(hierarchy_depths),
+        },
     )
 
     paths = SambaLingoBaselinePaths(
@@ -568,11 +587,14 @@ def run(
             if training_clustering_features_path is not None
             else None
         ),
-        excel=excel_path,
-        hierarchy_alignment_excel=hierarchy_alignment_path,
-        scores_csv=scores_csv,
-        scores_xlsx=scores_xlsx,
-        scores_txt=scores_txt,
+        excel=export_paths.excel,
+        hierarchy_alignment_excel=export_paths.hierarchy_alignment_excel,
+        scores_csv=export_paths.scores_csv,
+        scores_xlsx=export_paths.scores_xlsx,
+        scores_txt=export_paths.scores_txt,
+        artifacts_pickle=export_paths.artifacts_pickle,
+        annotated_conllu_plus=export_paths.annotated_conllu_plus,
+        annotated_conllu_plus_files=export_paths.annotated_conllu_plus_files,
     )
     return {
         "embedding_payload": payload,

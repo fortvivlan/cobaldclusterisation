@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from .cluster_exports import write_clustering_outputs
 from .clustering import (
     run_clustering_suite,
     save_clustering_results,
-    scores_to_dataframe,
 )
 from .data import corpus_to_dataframe, load_corpus
 from .embeddings import (
@@ -112,20 +112,21 @@ def _cmd_cluster(args: argparse.Namespace) -> None:
         show_progress=not args.no_progress,
     )
     output_path = save_clustering_results(results, args.output)
-    scores_path = output_path.with_suffix(".scores.csv")
-    scores_to_dataframe(results).to_csv(scores_path, index=False)
-    for index, result in enumerate(results):
-        summary_path = output_path.with_suffix(f".summary_{index}.csv")
-        summary = result["summary"]
-        if isinstance(summary, pd.DataFrame):
-            summary.to_csv(summary_path, index=False)
-        alignment_path = output_path.with_suffix(f".alignment_{index}.csv")
-        alignment = result.get("hierarchy_alignment")
-        if isinstance(alignment, pd.DataFrame) and not alignment.empty:
-            alignment.to_csv(alignment_path, index=False)
+    export_paths = write_clustering_outputs(
+        results,
+        payload["tokens"],
+        output_dir=args.results_dir or output_path.parent,
+        label=args.label,
+        metadata={
+            "embeddings": str(args.embeddings),
+            "hierarchy": str(hierarchy) if hierarchy is not None else None,
+            "hierarchy_depths": list(args.hierarchy_depths),
+        },
+    )
     print(f"runs={len(results)}")
     print(f"saved={output_path}")
-    print(f"scores={scores_path}")
+    print(f"scores={export_paths.scores_xlsx}")
+    print(f"artifacts={export_paths.artifacts_pickle}")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -165,6 +166,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     cluster_parser = subparsers.add_parser("cluster", help="Cluster saved embeddings.")
     cluster_parser.add_argument("embeddings")
     cluster_parser.add_argument("--output", default="outputs/clusters/results.pkl")
+    cluster_parser.add_argument("--results-dir")
+    cluster_parser.add_argument("--label", default="cobald")
     cluster_parser.add_argument("--hierarchy")
     cluster_parser.add_argument("--hierarchy-depths", type=int, nargs="+", default=[1, 2, 3])
     cluster_parser.add_argument(
