@@ -6,6 +6,8 @@ semantic classes.
 
 For a structured Colab API reference with import paths, signatures, argument
 descriptions, and returned artifacts, see [documentation.md](documentation.md).
+For a human-facing explanation of output workbook columns and annotated
+CoNLL-U Plus files, see [output_columns_guide.md](output_columns_guide.md).
 
 The corpus and semantic hierarchy live in external GitHub repositories and are
 not committed here:

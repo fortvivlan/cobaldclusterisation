@@ -54,6 +54,9 @@ family, for example:
 - `100cl_rubert_tiny2_Minibatch_Kmeans`
 - `100,200,300cl_rubert_tiny2_Hierarchical`
 
+For annotator-facing explanations of every workbook column and the CoNLL-U Plus
+exports, see [output_columns_guide.md](output_columns_guide.md).
+
 ## Resource Helpers
 
 Import:
