@@ -1,5 +1,10 @@
 """Utilities for CoBaLD semantic clustering experiments."""
 
+from .collocations import (
+    CollocationConfig,
+    build_collocation_tables,
+    run_collocation_experiment,
+)
 from .data import (
     CONLLU_COLUMNS,
     Sentence,
@@ -16,9 +21,11 @@ from .resources import ExternalDataPaths, ensure_external_data, resolve_hierarch
 
 __all__ = [
     "CONLLU_COLUMNS",
+    "CollocationConfig",
     "ExternalDataPaths",
     "Sentence",
     "Token",
+    "build_collocation_tables",
     "corpus_to_dataframe",
     "ensure_external_data",
     "iter_tokens",
@@ -28,5 +35,6 @@ __all__ = [
     "load_semclass_hierarchy",
     "parse_conllu",
     "resolve_hierarchy_path",
+    "run_collocation_experiment",
     "tokens_to_dataframe",
 ]

@@ -368,6 +368,74 @@ Arguments:
 
 Returns: embedding payload with `saved_path`.
 
+## Collocation Helpers
+
+Import:
+
+```python
+from cobaldclusterisation.collocations import (
+    CollocationConfig,
+    build_collocation_tables,
+    run_collocation_experiment,
+)
+```
+
+Install:
+
+```python
+!pip install -e ".[collocations]" openpyxl
+```
+
+These helpers create sentence-bounded bigram and trigram tables from CoBaLD
+surface non-punctuation tokens. By default they produce both lemma-based and
+surface-form sheets, lowercase token text, require `min_freq=3`, and sort by
+PMI while keeping frequency, raw frequency, likelihood ratio, Student's t, and
+chi-square columns.
+
+### `CollocationConfig(...)`
+
+Configuration for one collocation export.
+
+Arguments:
+
+- `data_dir`: CoBaLD corpus directory.
+- `splits`: split files to load, default `("train", "dev")`.
+- `token_bases`: `("lemma", "form")` by default.
+- `ngram_sizes`: `(2, 3)` by default.
+- `min_freq`: minimum n-gram count before scoring, default `3`.
+- `sort_by`: ranking column, default `pmi`.
+- `max_rows`: optional row cap per sheet.
+- `lowercase`: lowercase token text before counting when true.
+- `output_path`: output `.xlsx` workbook path.
+
+### `build_collocation_tables(sentences, ...)`
+
+Build collocation DataFrames from already loaded `Sentence` objects.
+
+Returns: dictionary keyed by sheet-style names such as `lemma_bigrams` and
+`form_trigrams`.
+
+### `run_collocation_experiment(config=None, **kwargs)`
+
+Load CoBaLD data, build collocation tables, write the Excel workbook, and
+return the intermediate objects.
+
+Example:
+
+```python
+from cobaldclusterisation.collocations import run_collocation_experiment
+
+result = run_collocation_experiment(
+    data_dir="CobaldRus",
+    output_path="outputs/collocations/cobald_collocations.xlsx",
+)
+
+result["tables"]["lemma_bigrams"].head()
+```
+
+Returns: dictionary with `config`, `sentences`, `tables`, `metadata`, and
+`output_path`.
+
 ## Clustering Helpers
 
 Import:

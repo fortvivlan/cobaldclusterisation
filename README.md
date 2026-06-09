@@ -643,6 +643,39 @@ cobald cluster outputs/embeddings/rubert_tiny2.pkl \
   --label rubert_tiny2
 ```
 
+## Collocation Experiment
+
+Install the lightweight collocation extra in Colab:
+
+```python
+!pip install -e ".[collocations]" openpyxl
+```
+
+Run the importable experiment on both lemmas and surface forms. The workbook
+contains lemma and form sheets for bigrams and trigrams, sorted by PMI by
+default, with frequency and additional NLTK association scores retained for
+inspection:
+
+```python
+from cobaldclusterisation.collocations import run_collocation_experiment
+
+result = run_collocation_experiment(
+    data_dir="CobaldRus",
+    output_path="outputs/collocations/cobald_collocations.xlsx",
+    min_freq=3,
+)
+
+result["output_path"]
+```
+
+The standalone script exposes the same defaults:
+
+```bash
+python scripts/collocations.py \
+  --data-dir CobaldRus \
+  --output outputs/collocations/cobald_collocations.xlsx
+```
+
 The clustering CLI shows progress by default. Add `--no-progress` for quieter
 batch runs. kNN graph clustering requires the optional `graph` extra. The CLI
 still saves the raw result pickle at `--output`; summary workbooks, score
