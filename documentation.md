@@ -436,6 +436,54 @@ result["tables"]["lemma_bigrams"].head()
 Returns: dictionary with `config`, `sentences`, `tables`, `metadata`, and
 `output_path`.
 
+## Identical-Form SEMCLASS Similarity Helpers
+
+Import:
+
+```python
+from cobaldclusterisation.form_semclass_similarity import (
+    FormSemclassSimilarityConfig,
+    run_form_semclass_similarity_experiment,
+)
+```
+
+These helpers analyze case-insensitive identical `FORM` values that carry more
+than one valid `SEMCLASS`. They combine an embedding payload pickle with a
+clustering artifact pickle, compute exact aggregate cosine similarities, and
+write one Excel workbook with separate sheets for every clustering run/count.
+
+### `FormSemclassSimilarityConfig(...)`
+
+Configuration for one identical-form analysis.
+
+Arguments:
+
+- `artifact_path`: clustering `*_artifacts.pkl` path.
+- `embeddings_path`: optional aligned embedding payload pickle. If omitted,
+  metadata and the Drive root are checked for `rubert_tiny2_cobald.pkl`.
+- `output_path`: optional output workbook path.
+- `max_examples_per_run`: capped context-example rows per clustering run.
+- `examples_per_form`: maximum examples per selected ambiguous form.
+- `create_plots`: save optional matplotlib scatter plots when available.
+
+### `run_form_semclass_similarity_experiment(config=None, **kwargs)`
+
+Load the artifact and embedding payload, validate row alignment, compute
+identical-form cosine and cluster-distribution summaries, and write the result
+workbook.
+
+Example:
+
+```python
+result = run_form_semclass_similarity_experiment(
+    artifact_path="drive/MyDrive/cobald_outputs/results/100,200,300,400,512,565cl_rubert_tiny2_Minibatch_Kmeans_artifacts.pkl",
+    embeddings_path="drive/MyDrive/cobald_outputs/rubert_tiny2_cobald.pkl",
+)
+```
+
+Returns: dictionary with `artifact_path`, `embeddings_path`, `run_tables`,
+`output_path`, and `plot_paths`.
+
 ## Clustering Helpers
 
 Import:

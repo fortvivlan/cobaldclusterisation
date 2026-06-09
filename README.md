@@ -676,6 +676,42 @@ python scripts/collocations.py \
   --output outputs/collocations/cobald_collocations.xlsx
 ```
 
+## Identical-Form SEMCLASS Similarity Experiment
+
+This experiment compares tokens whose surface forms coincide case-insensitively
+but whose manual `SEMCLASS` labels differ. It uses an aligned embedding pickle
+for cosine similarity and a clustering artifact pickle for automatic cluster
+labels.
+
+```python
+from cobaldclusterisation.form_semclass_similarity import (
+    run_form_semclass_similarity_experiment,
+)
+
+result = run_form_semclass_similarity_experiment(
+    artifact_path=(
+        "drive/MyDrive/cobald_outputs/results/"
+        "100,200,300,400,512,565cl_rubert_tiny2_Minibatch_Kmeans_artifacts.pkl"
+    ),
+)
+
+result["output_path"]
+```
+
+If the artifact metadata does not name the embeddings file, the helper looks
+for `rubert_tiny2_cobald.pkl` in the Drive output root. Pass
+`embeddings_path=...` to override that inference. The workbook contains an
+overview sheet plus per-cluster-count sheets for ambiguous forms, SEMCLASS
+pairs, within-SEMCLASS comparisons, and capped context examples.
+
+The standalone script exposes the same workflow:
+
+```bash
+python scripts/form_semclass_similarity.py \
+  --artifact drive/MyDrive/cobald_outputs/results/100,200,300,400,512,565cl_rubert_tiny2_Minibatch_Kmeans_artifacts.pkl \
+  --embeddings drive/MyDrive/cobald_outputs/rubert_tiny2_cobald.pkl
+```
+
 The clustering CLI shows progress by default. Add `--no-progress` for quieter
 batch runs. kNN graph clustering requires the optional `graph` extra. The CLI
 still saves the raw result pickle at `--output`; summary workbooks, score

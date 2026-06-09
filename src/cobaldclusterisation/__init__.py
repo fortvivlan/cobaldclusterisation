@@ -5,6 +5,10 @@ from .collocations import (
     build_collocation_tables,
     run_collocation_experiment,
 )
+from .form_semclass_similarity import (
+    FormSemclassSimilarityConfig,
+    run_form_semclass_similarity_experiment,
+)
 from .data import (
     CONLLU_COLUMNS,
     Sentence,
@@ -23,6 +27,7 @@ __all__ = [
     "CONLLU_COLUMNS",
     "CollocationConfig",
     "ExternalDataPaths",
+    "FormSemclassSimilarityConfig",
     "Sentence",
     "Token",
     "build_collocation_tables",
@@ -36,5 +41,6 @@ __all__ = [
     "parse_conllu",
     "resolve_hierarchy_path",
     "run_collocation_experiment",
+    "run_form_semclass_similarity_experiment",
     "tokens_to_dataframe",
 ]
