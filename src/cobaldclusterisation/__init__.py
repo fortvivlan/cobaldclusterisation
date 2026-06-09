@@ -1,8 +1,10 @@
 """Utilities for CoBaLD semantic clustering experiments."""
 
 from .collocations import (
+    CollocationClusterConfig,
     CollocationConfig,
     build_collocation_tables,
+    run_collocation_cluster_experiment,
     run_collocation_experiment,
 )
 from .form_semclass_similarity import (
@@ -25,6 +27,7 @@ from .resources import ExternalDataPaths, ensure_external_data, resolve_hierarch
 
 __all__ = [
     "CONLLU_COLUMNS",
+    "CollocationClusterConfig",
     "CollocationConfig",
     "ExternalDataPaths",
     "FormSemclassSimilarityConfig",
@@ -40,6 +43,7 @@ __all__ = [
     "load_semclass_hierarchy",
     "parse_conllu",
     "resolve_hierarchy_path",
+    "run_collocation_cluster_experiment",
     "run_collocation_experiment",
     "run_form_semclass_similarity_experiment",
     "tokens_to_dataframe",

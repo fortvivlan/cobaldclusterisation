@@ -374,8 +374,10 @@ Import:
 
 ```python
 from cobaldclusterisation.collocations import (
+    CollocationClusterConfig,
     CollocationConfig,
     build_collocation_tables,
+    run_collocation_cluster_experiment,
     run_collocation_experiment,
 )
 ```
@@ -435,6 +437,47 @@ result["tables"]["lemma_bigrams"].head()
 
 Returns: dictionary with `config`, `sentences`, `tables`, `metadata`, and
 `output_path`.
+
+### `CollocationClusterConfig(...)`
+
+Configuration for comparing collocations to saved clustering artifacts.
+
+Arguments are the same collocation settings as `CollocationConfig`, plus:
+
+- `artifact_path`: path to a clustering `*_artifacts.pkl` file.
+- `output_path`: optional cluster-overlap workbook path. When omitted, the
+  workbook is written next to the artifact in the Drive `results` folder with
+  the artifact prefix.
+- `max_examples_per_run`: capped exact collocation examples per clustering run.
+- `create_plots`: write optional diagnostic PNG plots when `matplotlib` is
+  installed.
+
+### `run_collocation_cluster_experiment(config=None, **kwargs)`
+
+Load CoBaLD data, compute collocations, load the clustering artifact, and write
+an Excel workbook showing whether collocation parts share automatic clusters.
+The workbook contains an overview sheet plus per-run sheets for collocations,
+collocation-part pairs, and exact sentence examples. Rows include per-part
+`SEMCLASS` summaries and both exact occurrence-level and aggregate lemma/form
+same-cluster rates.
+
+Example:
+
+```python
+from cobaldclusterisation.collocations import run_collocation_cluster_experiment
+
+result = run_collocation_cluster_experiment(
+    data_dir="CobaldRus",
+    artifact_path=(
+        "/content/drive/MyDrive/cobald_outputs/results/"
+        "100,200,300,400,512,565cl_rubert_tiny2_Minibatch_Kmeans_artifacts.pkl"
+    ),
+    min_freq=3,
+)
+
+result["output_path"]
+result["plot_paths"]
+```
 
 ## Identical-Form SEMCLASS Similarity Helpers
 

@@ -657,7 +657,10 @@ default, with frequency and additional NLTK association scores retained for
 inspection:
 
 ```python
-from cobaldclusterisation.collocations import run_collocation_experiment
+from cobaldclusterisation.collocations import (
+    run_collocation_cluster_experiment,
+    run_collocation_experiment,
+)
 
 result = run_collocation_experiment(
     data_dir="CobaldRus",
@@ -666,14 +669,32 @@ result = run_collocation_experiment(
 )
 
 result["output_path"]
+
+cluster_result = run_collocation_cluster_experiment(
+    data_dir="CobaldRus",
+    artifact_path=(
+        "/content/drive/MyDrive/cobald_outputs/results/"
+        "100,200,300,400,512,565cl_rubert_tiny2_Minibatch_Kmeans_artifacts.pkl"
+    ),
+    min_freq=3,
+)
+
+cluster_result["output_path"]
 ```
+
+The cluster-overlap workbook is written next to the artifact in the Drive
+`results` folder by default. It contains an overview sheet plus per-run sheets
+for collocations, collocation-part pairs, and exact corpus examples. The tables
+combine exact same-sentence collocation evidence with aggregate lemma/form
+cluster evidence, and include `SEMCLASS` summaries for each collocation part.
 
 The standalone script exposes the same defaults:
 
 ```bash
 python scripts/collocations.py \
   --data-dir CobaldRus \
-  --output outputs/collocations/cobald_collocations.xlsx
+  --output outputs/collocations/cobald_collocations.xlsx \
+  --artifact /content/drive/MyDrive/cobald_outputs/results/100,200,300,400,512,565cl_rubert_tiny2_Minibatch_Kmeans_artifacts.pkl
 ```
 
 ## Identical-Form SEMCLASS Similarity Experiment
