@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
@@ -16,6 +16,7 @@ from .data import Sentence, Token, load_corpus
 
 
 TokenBasis = Literal["lemma", "form"]
+OccurrenceIdIndex = dict[tuple[str, int, str], list[int]]
 
 DEFAULT_TOKEN_BASES: tuple[TokenBasis, ...] = ("lemma", "form")
 DEFAULT_NGRAM_SIZES: tuple[int, ...] = (2, 3)
@@ -408,6 +409,14 @@ def _row_token_text(
     lowercase: bool,
 ) -> str | None:
     value = row.get("LEMMA" if basis == "lemma" else "FORM")
+    return _normalize_token_text_value(value, lowercase=lowercase)
+
+
+def _normalize_token_text_value(
+    value: object,
+    *,
+    lowercase: bool,
+) -> str | None:
     if value is None:
         return None
     text = str(value)
@@ -490,6 +499,26 @@ def _collocation_occurrences(
     return pd.DataFrame(rows)
 
 
+def _occurrence_id_index(occurrences: pd.DataFrame) -> OccurrenceIdIndex:
+    if occurrences.empty:
+        return {}
+    required = {"token_basis", "ngram_size", "ngram", "occurrence_id"}
+    missing = sorted(required - set(occurrences.columns))
+    if missing:
+        raise ValueError(f"occurrences is missing required columns: {missing}")
+
+    grouped = occurrences.groupby(
+        ["token_basis", "ngram_size", "ngram"],
+        sort=False,
+    )["occurrence_id"].agg(list)
+    return {
+        (str(basis), int(ngram_size), str(ngram)): [
+            int(occurrence_id) for occurrence_id in occurrence_ids
+        ]
+        for (basis, ngram_size, ngram), occurrence_ids in grouped.items()
+    }
+
+
 def _annotated_frame(run: dict[str, object], *, run_index: int) -> pd.DataFrame:
     annotated = run.get("annotated_tokens")
     if not isinstance(annotated, pd.DataFrame):
@@ -501,7 +530,9 @@ def _annotated_frame(run: dict[str, object], *, run_index: int) -> pd.DataFrame:
     return annotated.reset_index(drop=True).copy()
 
 
-def _token_lookup(frame: pd.DataFrame) -> dict[tuple[object, object, object], pd.Series]:
+def _token_lookup(
+    frame: pd.DataFrame,
+) -> dict[tuple[object, object, object], dict[str, object]]:
     required = {"split", "sentence_index", "token_index"}
     missing = sorted(required - set(frame.columns))
     if missing:
@@ -509,9 +540,24 @@ def _token_lookup(frame: pd.DataFrame) -> dict[tuple[object, object, object], pd
             "annotated_tokens must contain split, sentence_index, and token_index "
             f"for exact collocation matching; missing: {missing}"
         )
-    lookup: dict[tuple[object, object, object], pd.Series] = {}
-    for _, row in frame.iterrows():
-        lookup[(row.get("split"), row.get("sentence_index"), row.get("token_index"))] = row
+    lookup: dict[tuple[object, object, object], dict[str, object]] = {}
+    columns = [
+        column
+        for column in (
+            "split",
+            "sentence_index",
+            "token_index",
+            "FORM",
+            "LEMMA",
+            "SEMCLASS",
+            "cluster",
+            "AUTO_SEMCLASS",
+        )
+        if column in frame.columns
+    ]
+    for row in frame[columns].to_dict("records"):
+        key = (row.get("split"), row.get("sentence_index"), row.get("token_index"))
+        lookup[key] = row
     return lookup
 
 
@@ -587,8 +633,14 @@ def _aggregate_maps(
     lowercase: bool,
 ) -> dict[str, dict[str, object]]:
     maps: dict[str, dict[str, object]] = {}
-    for _, row in frame.iterrows():
-        text = _row_token_text(row, basis=basis, lowercase=lowercase)
+    token_column = "LEMMA" if basis == "lemma" else "FORM"
+    for value, cluster, semclass in zip(
+        frame[token_column].tolist(),
+        frame["cluster"].tolist(),
+        frame["SEMCLASS"].tolist(),
+        strict=False,
+    ):
+        text = _normalize_token_text_value(value, lowercase=lowercase)
         if text is None:
             continue
         entry = maps.setdefault(
@@ -600,8 +652,7 @@ def _aggregate_maps(
             },
         )
         entry["token_count"] = int(entry["token_count"]) + 1
-        entry["clusters"][int(row["cluster"])] += 1
-        semclass = row.get("SEMCLASS")
+        entry["clusters"][int(cluster)] += 1
         if _valid_semclass(semclass):
             entry["semclasses"][str(semclass)] += 1
     return maps
@@ -793,11 +844,14 @@ def analyze_collocation_cluster_run(
     run_index: int,
     lowercase: bool,
     max_examples: int,
+    occurrence_id_index: Mapping[tuple[str, int, str], Sequence[int]] | None = None,
 ) -> dict[str, pd.DataFrame | dict[str, object]]:
     """Analyze one clustering run against already computed collocation tables."""
 
     frame = _annotated_frame(run, run_index=run_index)
     names = _cluster_names(frame)
+    if occurrence_id_index is None:
+        occurrence_id_index = _occurrence_id_index(occurrences)
     occurrence_infos, examples = _exact_rows_for_run(
         occurrences,
         frame,
@@ -819,12 +873,7 @@ def analyze_collocation_cluster_run(
             ngram = str(table_row["ngram"])
             parts = tuple(ngram.split(" "))
             aggregate = aggregate_by_basis.get(basis, {})
-            occurrence_slice = occurrences.loc[
-                (occurrences["token_basis"] == basis)
-                & (occurrences["ngram_size"] == ngram_size)
-                & (occurrences["ngram"] == ngram)
-            ]
-            occurrence_ids = occurrence_slice["occurrence_id"].astype(int).tolist()
+            occurrence_ids = occurrence_id_index.get((basis, ngram_size, ngram), ())
 
             base = table_row.to_dict()
             base["source_sheet"] = table_name
@@ -1054,7 +1103,7 @@ def write_collocation_cluster_excel(
                 sheet_name = _sheet_name(f"{table_name}_{run_label}", used_sheets)
                 table.to_excel(writer, sheet_name=sheet_name, index=False)
         for worksheet in writer.sheets.values():
-            for row in worksheet.iter_rows():
+            for row in worksheet.iter_rows(min_row=1, max_row=1):
                 for cell in row:
                     cell.alignment = Alignment(wrap_text=True, vertical="top")
             worksheet.freeze_panes = "A2"
@@ -1171,6 +1220,7 @@ def run_collocation_cluster_experiment(
         ngram_sizes=config.ngram_sizes,
         lowercase=config.lowercase,
     )
+    occurrence_id_index = _occurrence_id_index(occurrences)
 
     artifact_path = Path(config.artifact_path)
     artifact = load_clustering_artifact(artifact_path)
@@ -1183,6 +1233,7 @@ def run_collocation_cluster_experiment(
             run_index=run_index,
             lowercase=config.lowercase,
             max_examples=config.max_examples_per_run,
+            occurrence_id_index=occurrence_id_index,
         )
         for run_index, run in enumerate(runs)
     ]

@@ -8,6 +8,7 @@ from openpyxl import load_workbook
 pytest.importorskip("nltk")
 
 from cobaldclusterisation.collocations import (
+    _occurrence_id_index,
     build_collocation_tables,
     collocation_table_from_documents,
     run_collocation_cluster_experiment,
@@ -141,6 +142,22 @@ def test_write_collocation_excel_creates_expected_sheets(tmp_path: Path) -> None
     assert set(workbook.sheetnames) == {"lemma_bigrams", "metadata"}
     assert workbook["lemma_bigrams"].freeze_panes == "A2"
     assert workbook["metadata"].freeze_panes == "A2"
+
+
+def test_occurrence_id_index_groups_exact_matches() -> None:
+    occurrences = pd.DataFrame(
+        {
+            "token_basis": ["lemma", "lemma", "form"],
+            "ngram_size": [2, 2, 3],
+            "ngram": ["белый дом", "белый дом", "new york city"],
+            "occurrence_id": [10, 11, 12],
+        }
+    )
+
+    index = _occurrence_id_index(occurrences)
+
+    assert index[("lemma", 2, "белый дом")] == [10, 11]
+    assert index[("form", 3, "new york city")] == [12]
 
 
 def _write_corpus(path: Path) -> None:

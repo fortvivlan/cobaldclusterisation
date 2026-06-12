@@ -682,6 +682,23 @@ cluster_result = run_collocation_cluster_experiment(
 cluster_result["output_path"]
 ```
 
+For a first Colab pass, cap each collocation source table and skip optional
+plots:
+
+```python
+cluster_result = run_collocation_cluster_experiment(
+    data_dir="CobaldRus",
+    artifact_path="/content/drive/MyDrive/cobald_outputs/results/...",
+    min_freq=3,
+    max_rows=1000,
+    create_plots=False,
+)
+```
+
+With the default `max_rows=None`, the train+dev corpus can produce tens of
+thousands of collocation rows per clustering run, plus pair-detail sheets, so
+the Excel export can still be large.
+
 The cluster-overlap workbook is written next to the artifact in the Drive
 `results` folder by default. It contains an overview sheet plus per-run sheets
 for collocations, collocation-part pairs, and exact corpus examples. The tables
