@@ -39,7 +39,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="2,3",
         help="Comma-separated n-gram sizes. Supported values: 2,3.",
     )
-    parser.add_argument("--min-freq", type=int, default=3)
+    parser.add_argument(
+        "--min-freq",
+        type=int,
+        default=3,
+        help=(
+            "Minimum n-gram count for the collocation score workbook. The "
+            "cluster workbook enforces at least 5."
+        ),
+    )
     parser.add_argument("--sort-by", default="pmi")
     parser.add_argument("--max-rows", type=int)
     parser.add_argument(
@@ -71,7 +79,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--max-cluster-examples",
         type=int,
         default=300,
-        help="Maximum exact collocation occurrence examples per clustering run.",
+        help=(
+            "Compatibility option. The simplified cluster workbook no longer "
+            "writes exact occurrence example sheets."
+        ),
     )
     parser.add_argument(
         "--no-cluster-plots",

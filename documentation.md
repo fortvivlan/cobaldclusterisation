@@ -440,7 +440,7 @@ Returns: dictionary with `config`, `sentences`, `tables`, `metadata`, and
 
 ### `CollocationClusterConfig(...)`
 
-Configuration for comparing collocations to saved clustering artifacts.
+Configuration for comparing lemma collocations to saved clustering artifacts.
 
 Arguments are the same collocation settings as `CollocationConfig`, plus:
 
@@ -448,18 +448,23 @@ Arguments are the same collocation settings as `CollocationConfig`, plus:
 - `output_path`: optional cluster-overlap workbook path. When omitted, the
   workbook is written next to the artifact in the Drive `results` folder with
   the artifact prefix.
-- `max_examples_per_run`: capped exact collocation examples per clustering run.
-- `create_plots`: write optional diagnostic PNG plots when `matplotlib` is
-  installed.
+- `min_freq`: minimum lemma n-gram count. The cluster experiment enforces at
+  least `5`.
+- `max_examples_per_run`: retained for compatibility; the simplified workbook
+  no longer writes example sheets.
+- `create_plots`: retained for compatibility; the simplified workbook does not
+  write the old rate-based diagnostic plots.
 
 ### `run_collocation_cluster_experiment(config=None, **kwargs)`
 
 Load CoBaLD data, compute collocations, load the clustering artifact, and write
-an Excel workbook showing whether collocation parts share automatic clusters.
-The workbook contains an overview sheet plus per-run sheets for collocations,
-collocation-part pairs, and exact sentence examples. Rows include per-part
-`SEMCLASS` summaries and both exact occurrence-level and aggregate lemma/form
-same-cluster rates.
+an Excel workbook showing whether frequent lemma collocation parts share
+automatic clusters. The workbook contains an overview sheet plus one
+`collocations_*` sheet per clustering run. Each row is a lemma bigram or
+trigram with at least five corpus occurrences; bigrams embedded in a selected
+trigram are dropped. Rows include per-part dominant-in-collocation `SEMCLASS`,
+all observed `SEMCLASS` labels for that lemma, distinct cluster counts per part,
+and the count of clusters shared by all parts.
 
 Example:
 
@@ -472,7 +477,7 @@ result = run_collocation_cluster_experiment(
         "/content/drive/MyDrive/cobald_outputs/results/"
         "100,200,300,400,512,565cl_rubert_tiny2_Minibatch_Kmeans_artifacts.pkl"
     ),
-    min_freq=3,
+    min_freq=5,
 )
 
 result["output_path"]

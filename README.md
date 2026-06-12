@@ -676,7 +676,7 @@ cluster_result = run_collocation_cluster_experiment(
         "/content/drive/MyDrive/cobald_outputs/results/"
         "100,200,300,400,512,565cl_rubert_tiny2_Minibatch_Kmeans_artifacts.pkl"
     ),
-    min_freq=3,
+    min_freq=5,
 )
 
 cluster_result["output_path"]
@@ -689,21 +689,20 @@ plots:
 cluster_result = run_collocation_cluster_experiment(
     data_dir="CobaldRus",
     artifact_path="/content/drive/MyDrive/cobald_outputs/results/...",
-    min_freq=3,
+    min_freq=5,
     max_rows=1000,
     create_plots=False,
 )
 ```
 
-With the default `max_rows=None`, the train+dev corpus can produce tens of
-thousands of collocation rows per clustering run, plus pair-detail sheets, so
-the Excel export can still be large.
-
 The cluster-overlap workbook is written next to the artifact in the Drive
-`results` folder by default. It contains an overview sheet plus per-run sheets
-for collocations, collocation-part pairs, and exact corpus examples. The tables
-combine exact same-sentence collocation evidence with aggregate lemma/form
-cluster evidence, and include `SEMCLASS` summaries for each collocation part.
+`results` folder by default. It contains an overview sheet plus one
+`collocations_*` sheet per clustering run. The cluster experiment is lemma-only
+and keeps n-grams with at least five corpus occurrences. If a selected trigram
+contains a selected bigram, the bigram is dropped. Each row lists the
+collocation frequency, per-part dominant-in-collocation and all-observed
+`SEMCLASS` labels, distinct cluster counts for each part, and the count of
+clusters shared by all parts.
 
 The standalone script exposes the same defaults:
 

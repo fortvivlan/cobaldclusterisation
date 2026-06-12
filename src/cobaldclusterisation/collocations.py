@@ -22,6 +22,7 @@ DEFAULT_TOKEN_BASES: tuple[TokenBasis, ...] = ("lemma", "form")
 DEFAULT_NGRAM_SIZES: tuple[int, ...] = (2, 3)
 DEFAULT_SORT_BY = "pmi"
 DEFAULT_MIN_FREQ = 3
+DEFAULT_CLUSTER_MIN_FREQ = 5
 DEFAULT_CLUSTER_ARTIFACT_PATH = (
     "/content/drive/MyDrive/cobald_outputs/results/"
     "100,200,300,400,512,565cl_rubert_tiny2_Minibatch_Kmeans_artifacts.pkl"
@@ -62,7 +63,7 @@ class CollocationClusterConfig:
     splits: Sequence[str] = ("train", "dev")
     token_bases: Sequence[TokenBasis] = DEFAULT_TOKEN_BASES
     ngram_sizes: Sequence[int] = DEFAULT_NGRAM_SIZES
-    min_freq: int = DEFAULT_MIN_FREQ
+    min_freq: int = DEFAULT_CLUSTER_MIN_FREQ
     sort_by: str = DEFAULT_SORT_BY
     max_rows: int | None = None
     lowercase: bool = True
@@ -679,6 +680,135 @@ def _part_stats(
     return row
 
 
+def _cluster_collocation_table(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Return lemma collocations for cluster inspection, dropping embedded bigrams."""
+
+    frames: list[pd.DataFrame] = []
+    for table_name in ("lemma_bigrams", "lemma_trigrams"):
+        table = tables.get(table_name, pd.DataFrame())
+        if table.empty:
+            continue
+        frame = table.copy()
+        frame["source_sheet"] = table_name
+        frame["source_rank"] = range(1, len(frame) + 1)
+        frames.append(frame)
+    if not frames:
+        return pd.DataFrame()
+
+    collocations = pd.concat(frames, ignore_index=True, sort=False)
+    trigram_bigrams: set[str] = set()
+    for ngram in collocations.loc[
+        collocations["ngram_size"].astype(int) == 3,
+        "ngram",
+    ].astype(str):
+        parts = tuple(ngram.split(" "))
+        trigram_bigrams.update(
+            " ".join(parts[index : index + 2])
+            for index in range(0, len(parts) - 1)
+        )
+    if trigram_bigrams:
+        collocations = collocations.loc[
+            ~(
+                (collocations["ngram_size"].astype(int) == 2)
+                & collocations["ngram"].astype(str).isin(trigram_bigrams)
+            )
+        ].copy()
+    if collocations.empty:
+        return collocations
+    return collocations.sort_values(
+        by=["frequency", "ngram_size", "pmi", "ngram"],
+        ascending=[False, False, False, True],
+        na_position="last",
+        kind="mergesort",
+    ).reset_index(drop=True)
+
+
+def _collocation_semclass_counters(
+    occurrence_ids: Sequence[int],
+    occurrence_infos: dict[int, list[dict[str, object]]],
+    *,
+    part_count: int,
+) -> list[Counter[str]]:
+    counters = [Counter() for _ in range(part_count)]
+    for occurrence_id in occurrence_ids:
+        infos = occurrence_infos.get(int(occurrence_id), [])
+        for index in range(min(part_count, len(infos))):
+            semclass = infos[index].get("SEMCLASS")
+            if _valid_semclass(semclass):
+                counters[index][str(semclass)] += 1
+    return counters
+
+
+def _format_semclass_summary(
+    collocation_semclasses: Counter[str],
+    all_semclasses: Counter[str],
+) -> str:
+    dominant = (
+        collocation_semclasses.most_common(1)[0][0]
+        if collocation_semclasses
+        else ""
+    )
+    all_values = ", ".join(label for label, _ in all_semclasses.most_common())
+    return "\n".join(
+        line
+        for line in (
+            f"dominant in collocation: {dominant}" if dominant else "",
+            f"all: {all_values}" if all_values else "",
+        )
+        if line
+    )
+
+
+def _shared_cluster_count(counters: Sequence[Counter[int]]) -> int:
+    if not counters:
+        return 0
+    shared = set(counters[0])
+    for counter in counters[1:]:
+        shared &= set(counter)
+    return len(shared)
+
+
+def _simple_collocation_row(
+    table_row: pd.Series,
+    *,
+    aggregate: dict[str, dict[str, object]],
+    occurrence_ids: Sequence[int],
+    occurrence_infos: dict[int, list[dict[str, object]]],
+) -> dict[str, object]:
+    ngram = str(table_row["ngram"])
+    parts = tuple(ngram.split(" "))
+    collocation_semclasses = _collocation_semclass_counters(
+        occurrence_ids,
+        occurrence_infos,
+        part_count=len(parts),
+    )
+    cluster_counters: list[Counter[int]] = []
+    row: dict[str, object] = {
+        "collocation": ngram,
+        "frequency": int(table_row["frequency"]),
+    }
+    cluster_count_lines: list[str] = []
+    for index, part in enumerate(parts, start=1):
+        stats = aggregate.get(part, {})
+        all_semclasses = stats.get("semclasses", Counter())
+        clusters = stats.get("clusters", Counter())
+        assert isinstance(all_semclasses, Counter)
+        assert isinstance(clusters, Counter)
+        cluster_counters.append(clusters)
+        row[f"part_{index}"] = part
+        row[f"part_{index}_semclasses"] = _format_semclass_summary(
+            collocation_semclasses[index - 1],
+            all_semclasses,
+        )
+        cluster_count_lines.append(f"{part}: {len(clusters)}")
+    for index in range(len(parts) + 1, 4):
+        row[f"part_{index}"] = ""
+        row[f"part_{index}_semclasses"] = ""
+    row["cluster_counts"] = "\n".join(cluster_count_lines)
+    row["intersecting_cluster_count"] = _shared_cluster_count(cluster_counters)
+    return row
+
+
 def _counter_product_total(counters: Sequence[Counter[int]]) -> int:
     total = 1
     for counter in counters:
@@ -849,156 +979,48 @@ def analyze_collocation_cluster_run(
     """Analyze one clustering run against already computed collocation tables."""
 
     frame = _annotated_frame(run, run_index=run_index)
-    names = _cluster_names(frame)
     if occurrence_id_index is None:
         occurrence_id_index = _occurrence_id_index(occurrences)
-    occurrence_infos, examples = _exact_rows_for_run(
+    occurrence_infos, _ = _exact_rows_for_run(
         occurrences,
         frame,
-        max_examples=max_examples,
+        max_examples=0,
     )
-    aggregate_by_basis = {
-        "lemma": _aggregate_maps(frame, basis="lemma", lowercase=lowercase),
-        "form": _aggregate_maps(frame, basis="form", lowercase=lowercase),
-    }
+    aggregate = _aggregate_maps(frame, basis="lemma", lowercase=lowercase)
 
     collocation_rows: list[dict[str, object]] = []
-    pair_rows: list[dict[str, object]] = []
-    for table_name, table in tables.items():
-        if table.empty:
-            continue
-        for table_row_index, table_row in table.reset_index(drop=True).iterrows():
-            basis = str(table_row["token_basis"])
-            ngram_size = int(table_row["ngram_size"])
-            ngram = str(table_row["ngram"])
-            parts = tuple(ngram.split(" "))
-            aggregate = aggregate_by_basis.get(basis, {})
-            occurrence_ids = occurrence_id_index.get((basis, ngram_size, ngram), ())
-
-            base = table_row.to_dict()
-            base["source_sheet"] = table_name
-            base["source_rank"] = table_row_index + 1
-            base["parts"] = "\n".join(parts)
-            base.update(_part_stats(parts, aggregate))
-            base.update(_exact_collocation_metrics(occurrence_ids, occurrence_infos))
-
-            counters = [
-                aggregate.get(part, {}).get("clusters", Counter()) for part in parts
-            ]
-            typed_counters: list[Counter[int]] = []
-            for counter in counters:
-                assert isinstance(counter, Counter)
-                typed_counters.append(counter)
-            aggregate_all_total = _counter_product_total(typed_counters)
-            aggregate_all_same = _counter_all_same_count(typed_counters)
-            aggregate_pair_total = 0
-            aggregate_pair_same = 0
-            for left_counter, right_counter in combinations(typed_counters, 2):
-                pair_total, pair_same, _ = _pair_metric(left_counter, right_counter)
-                aggregate_pair_total += pair_total
-                aggregate_pair_same += pair_same
-            base["aggregate_all_parts_observation_count"] = aggregate_all_total
-            base["aggregate_all_parts_same_cluster_count"] = aggregate_all_same
-            base["aggregate_all_parts_same_cluster_rate"] = _mean_or_nan(
-                float(aggregate_all_same),
-                aggregate_all_total,
+    selected_collocations = _cluster_collocation_table(tables)
+    for _, table_row in selected_collocations.iterrows():
+        ngram_size = int(table_row["ngram_size"])
+        ngram = str(table_row["ngram"])
+        occurrence_ids = occurrence_id_index.get(("lemma", ngram_size, ngram), ())
+        collocation_rows.append(
+            _simple_collocation_row(
+                table_row,
+                aggregate=aggregate,
+                occurrence_ids=occurrence_ids,
+                occurrence_infos=occurrence_infos,
             )
-            base["aggregate_pair_observation_count"] = aggregate_pair_total
-            base["aggregate_same_cluster_pair_count"] = aggregate_pair_same
-            base["aggregate_same_cluster_pair_rate"] = _mean_or_nan(
-                float(aggregate_pair_same),
-                aggregate_pair_total,
-            )
-            base["has_aggregate_shared_cluster"] = aggregate_pair_same > 0
-            base["aggregate_shared_clusters_all_parts"] = _shared_all_summary(
-                typed_counters,
-                names=names,
-            )
-            collocation_rows.append(base)
-
-            for left_index, right_index in combinations(range(len(parts)), 2):
-                left = parts[left_index]
-                right = parts[right_index]
-                left_stats = aggregate.get(left, {})
-                right_stats = aggregate.get(right, {})
-                left_clusters = left_stats.get("clusters", Counter())
-                right_clusters = right_stats.get("clusters", Counter())
-                left_semclasses = left_stats.get("semclasses", Counter())
-                right_semclasses = right_stats.get("semclasses", Counter())
-                assert isinstance(left_clusters, Counter)
-                assert isinstance(right_clusters, Counter)
-                assert isinstance(left_semclasses, Counter)
-                assert isinstance(right_semclasses, Counter)
-                exact_total, exact_same, exact_rate = _exact_pair_metrics(
-                    occurrence_ids,
-                    occurrence_infos,
-                    left_index=left_index,
-                    right_index=right_index,
-                )
-                aggregate_total, aggregate_same, aggregate_rate = _pair_metric(
-                    left_clusters,
-                    right_clusters,
-                )
-                pair_rows.append(
-                    {
-                        "source_sheet": table_name,
-                        "source_rank": table_row_index + 1,
-                        "token_basis": basis,
-                        "ngram_size": ngram_size,
-                        "ngram": ngram,
-                        "frequency": table_row.get("frequency"),
-                        "pmi": table_row.get("pmi"),
-                        "part_a_position": left_index + 1,
-                        "part_b_position": right_index + 1,
-                        "part_a": left,
-                        "part_b": right,
-                        "part_a_token_count": int(left_stats.get("token_count", 0)),
-                        "part_b_token_count": int(right_stats.get("token_count", 0)),
-                        "part_a_semclasses": _format_counter(left_semclasses),
-                        "part_b_semclasses": _format_counter(right_semclasses),
-                        "part_a_clusters": _format_counter(left_clusters),
-                        "part_b_clusters": _format_counter(right_clusters),
-                        "exact_pair_observation_count": exact_total,
-                        "exact_same_cluster_count": exact_same,
-                        "exact_same_cluster_rate": exact_rate,
-                        "aggregate_pair_observation_count": aggregate_total,
-                        "aggregate_same_cluster_count": aggregate_same,
-                        "aggregate_same_cluster_rate": aggregate_rate,
-                        "has_aggregate_shared_cluster": aggregate_same > 0,
-                        "aggregate_shared_clusters": _shared_pair_summary(
-                            left_clusters,
-                            right_clusters,
-                            names=names,
-                        ),
-                    }
-                )
+        )
 
     collocations = pd.DataFrame(collocation_rows)
-    pairs = pd.DataFrame(pair_rows)
     if not collocations.empty:
-        collocations = collocations.sort_values(
-            by=[
-                "aggregate_same_cluster_pair_rate",
-                "exact_same_cluster_pair_rate",
+        collocations = collocations[
+            [
+                "collocation",
                 "frequency",
-                "source_sheet",
-                "source_rank",
-            ],
-            ascending=[False, False, False, True, True],
-            na_position="last",
-        ).reset_index(drop=True)
-    if not pairs.empty:
-        pairs = pairs.sort_values(
-            by=[
-                "aggregate_same_cluster_rate",
-                "exact_same_cluster_rate",
-                "frequency",
-                "source_sheet",
-                "source_rank",
-            ],
-            ascending=[False, False, False, True, True],
-            na_position="last",
-        ).reset_index(drop=True)
+                "part_1",
+                "part_1_semclasses",
+                "part_2",
+                "part_2_semclasses",
+                "part_3",
+                "part_3_semclasses",
+                "cluster_counts",
+                "intersecting_cluster_count",
+            ]
+        ]
+    pairs = pd.DataFrame()
+    examples = pd.DataFrame()
 
     overview = _collocation_cluster_overview(
         run,
@@ -1038,38 +1060,6 @@ def _collocation_cluster_overview(
         "algorithm": config.get("algorithm"),
         "n_clusters": config.get("n_clusters"),
         "collocation_count": int(len(collocations)),
-        "collocation_pair_count": int(len(pairs)),
-        "example_count": int(len(examples)),
-        "exact_pair_observation_count": (
-            int(collocations["exact_pair_observation_count"].sum())
-            if not collocations.empty
-            else 0
-        ),
-        "exact_same_cluster_pair_rate": _weighted_rate(
-            collocations,
-            "exact_same_cluster_pair_count",
-            "exact_pair_observation_count",
-        ),
-        "exact_all_parts_same_cluster_rate": _weighted_rate(
-            collocations,
-            "exact_all_parts_same_cluster_count",
-            "exact_all_parts_observation_count",
-        ),
-        "aggregate_pair_observation_count": (
-            int(collocations["aggregate_pair_observation_count"].sum())
-            if not collocations.empty
-            else 0
-        ),
-        "aggregate_same_cluster_pair_rate": _weighted_rate(
-            collocations,
-            "aggregate_same_cluster_pair_count",
-            "aggregate_pair_observation_count",
-        ),
-        "aggregate_all_parts_same_cluster_rate": _weighted_rate(
-            collocations,
-            "aggregate_all_parts_same_cluster_count",
-            "aggregate_all_parts_observation_count",
-        ),
     }
 
 
@@ -1097,11 +1087,10 @@ def write_collocation_cluster_excel(
             overview_row = tables["overview"]
             assert isinstance(overview_row, dict)
             run_label = str(overview_row["run_label"])
-            for table_name in ("collocations", "pairs", "examples"):
-                table = tables[table_name]
-                assert isinstance(table, pd.DataFrame)
-                sheet_name = _sheet_name(f"{table_name}_{run_label}", used_sheets)
-                table.to_excel(writer, sheet_name=sheet_name, index=False)
+            table = tables["collocations"]
+            assert isinstance(table, pd.DataFrame)
+            sheet_name = _sheet_name(f"collocations_{run_label}", used_sheets)
+            table.to_excel(writer, sheet_name=sheet_name, index=False)
         for worksheet in writer.sheets.values():
             for row in worksheet.iter_rows(min_row=1, max_row=1):
                 for cell in row:
@@ -1131,7 +1120,14 @@ def write_collocation_cluster_plots(
         if not isinstance(overview, dict):
             continue
         run_label = str(overview["run_label"])
-        if isinstance(collocations, pd.DataFrame) and not collocations.empty:
+        if (
+            isinstance(collocations, pd.DataFrame)
+            and not collocations.empty
+            and {
+                "exact_same_cluster_pair_rate",
+                "aggregate_same_cluster_pair_rate",
+            }.issubset(collocations.columns)
+        ):
             scatter_path = output_path.with_name(
                 f"{output_path.stem}_{run_label}_exact_vs_aggregate.png"
             )
@@ -1149,7 +1145,11 @@ def write_collocation_cluster_plots(
             fig.savefig(scatter_path, dpi=160)
             plt.close(fig)
             plot_paths.append(str(scatter_path))
-        if isinstance(pairs, pd.DataFrame) and not pairs.empty:
+        if (
+            isinstance(pairs, pd.DataFrame)
+            and not pairs.empty
+            and "aggregate_same_cluster_rate" in pairs.columns
+        ):
             histogram_path = output_path.with_name(
                 f"{output_path.stem}_{run_label}_pair_rate_hist.png"
             )
@@ -1204,11 +1204,13 @@ def run_collocation_cluster_experiment(
     _validate_cluster_config(config)
 
     sentences = load_corpus(config.data_dir, splits=config.splits)
+    cluster_token_bases: tuple[TokenBasis, ...] = ("lemma",)
+    cluster_min_freq = max(config.min_freq, DEFAULT_CLUSTER_MIN_FREQ)
     tables = build_collocation_tables(
         sentences,
-        token_bases=config.token_bases,
+        token_bases=cluster_token_bases,
         ngram_sizes=config.ngram_sizes,
-        min_freq=config.min_freq,
+        min_freq=cluster_min_freq,
         sort_by=config.sort_by,
         max_rows=config.max_rows,
         lowercase=config.lowercase,
@@ -1216,7 +1218,7 @@ def run_collocation_cluster_experiment(
     occurrences = _collocation_occurrences(
         sentences,
         tables,
-        token_bases=config.token_bases,
+        token_bases=cluster_token_bases,
         ngram_sizes=config.ngram_sizes,
         lowercase=config.lowercase,
     )

@@ -161,66 +161,96 @@ def test_occurrence_id_index_groups_exact_matches() -> None:
 
 
 def _write_corpus(path: Path) -> None:
-    path.write_text(
-        "\n".join(
+    lines: list[str] = []
+    for index in range(5):
+        lines.extend(
             [
-                "# sent_id = s0",
+                f"# sent_id = danger{index}",
                 "# text = Грозит смертельная опасность.",
                 "1\tГрозит\tгрозить\tVERB\t_\t_\t0\troot\t_\t_\t_\tACTION",
                 "2\tсмертельная\tсмертельный\tADJ\t_\t_\t1\tamod\t_\t_\t_\tQUALITY",
                 "3\tопасность\tопасность\tNOUN\t_\t_\t1\tobj\t_\t_\t_\tDANGER",
                 "4\t.\t.\tPUNCT\t_\t_\t1\tpunct\t_\t_\t_\t_",
                 "",
-                "# sent_id = s1",
-                "# text = Грозила смертельная опасность.",
-                "1\tГрозила\tгрозить\tVERB\t_\t_\t0\troot\t_\t_\t_\tACTION",
-                "2\tсмертельная\tсмертельный\tADJ\t_\t_\t1\tamod\t_\t_\t_\tQUALITY",
-                "3\tопасность\tопасность\tNOUN\t_\t_\t1\tobj\t_\t_\t_\tDANGER",
-                "4\t.\t.\tPUNCT\t_\t_\t1\tpunct\t_\t_\t_\t_",
-                "",
-                "# sent_id = s2",
-                "# text = Карета скорая помощь.",
-                "1\tКарета\tкарета\tNOUN\t_\t_\t0\troot\t_\t_\t_\tVEHICLE",
-                "2\tскорая\tскорый\tADJ\t_\t_\t3\tamod\t_\t_\t_\tQUALITY",
-                "3\tпомощь\tпомощь\tNOUN\t_\t_\t1\tappos\t_\t_\t_\tHELP",
-                "4\t.\t.\tPUNCT\t_\t_\t1\tpunct\t_\t_\t_\t_",
+            ]
+        )
+    for index in range(5):
+        lines.extend(
+            [
+                f"# sent_id = help{index}",
+                "# text = Скорая помощь.",
+                "1\tСкорая\tскорый\tADJ\t_\t_\t2\tamod\t_\t_\t_\tQUALITY",
+                "2\tпомощь\tпомощь\tNOUN\t_\t_\t0\troot\t_\t_\t_\tHELP",
+                "3\t.\t.\tPUNCT\t_\t_\t2\tpunct\t_\t_\t_\t_",
                 "",
             ]
-        ),
-        encoding="utf-8",
-    )
+        )
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _artifact_tokens(clusters: list[int]) -> pd.DataFrame:
-    rows = [
-        ("Грозит", "грозить", "VERB", "ACTION", 0, 0, "s0", "Грозит смертельная опасность."),
-        (
-            "смертельная",
-            "смертельный",
-            "ADJ",
-            "QUALITY",
-            0,
-            1,
-            "s0",
-            "Грозит смертельная опасность.",
-        ),
-        ("опасность", "опасность", "NOUN", "DANGER", 0, 2, "s0", "Грозит смертельная опасность."),
-        ("Грозила", "грозить", "VERB", "ACTION", 1, 0, "s1", "Грозила смертельная опасность."),
-        (
-            "смертельная",
-            "смертельный",
-            "ADJ",
-            "QUALITY",
-            1,
-            1,
-            "s1",
-            "Грозила смертельная опасность.",
-        ),
-        ("опасность", "опасность", "NOUN", "DANGER", 1, 2, "s1", "Грозила смертельная опасность."),
-        ("Карета", "карета", "NOUN", "VEHICLE", 2, 0, "s2", "Карета скорая помощь."),
-        ("скорая", "скорый", "ADJ", "QUALITY", 2, 1, "s2", "Карета скорая помощь."),
-        ("помощь", "помощь", "NOUN", "HELP", 2, 2, "s2", "Карета скорая помощь."),
-    ]
+    rows = []
+    for sentence_index in range(5):
+        rows.extend(
+            [
+                (
+                    "Грозит",
+                    "грозить",
+                    "VERB",
+                    "ACTION",
+                    sentence_index,
+                    0,
+                    f"danger{sentence_index}",
+                    "Грозит смертельная опасность.",
+                ),
+                (
+                    "смертельная",
+                    "смертельный",
+                    "ADJ",
+                    "QUALITY",
+                    sentence_index,
+                    1,
+                    f"danger{sentence_index}",
+                    "Грозит смертельная опасность.",
+                ),
+                (
+                    "опасность",
+                    "опасность",
+                    "NOUN",
+                    "DANGER",
+                    sentence_index,
+                    2,
+                    f"danger{sentence_index}",
+                    "Грозит смертельная опасность.",
+                ),
+            ]
+        )
+    for sentence_index in range(5, 10):
+        help_index = sentence_index - 5
+        rows.extend(
+            [
+                (
+                    "Скорая",
+                    "скорый",
+                    "ADJ",
+                    "QUALITY",
+                    sentence_index,
+                    0,
+                    f"help{help_index}",
+                    "Скорая помощь.",
+                ),
+                (
+                    "помощь",
+                    "помощь",
+                    "NOUN",
+                    "HELP",
+                    sentence_index,
+                    1,
+                    f"help{help_index}",
+                    "Скорая помощь.",
+                ),
+            ]
+        )
     frame = pd.DataFrame(
         [
             {
@@ -254,13 +284,13 @@ def _write_artifact(path: Path) -> None:
     runs = [
         {
             "config": {"algorithm": "minibatch_kmeans", "n_clusters": 100},
-            "labels": [0, 0, 1, 0, 0, 1, 2, 3, 4],
-            "annotated_tokens": _artifact_tokens([0, 0, 1, 0, 0, 1, 2, 3, 4]),
+            "labels": [0, 0, 1] * 5 + [2, 2] * 5,
+            "annotated_tokens": _artifact_tokens([0, 0, 1] * 5 + [2, 2] * 5),
         },
         {
             "config": {"algorithm": "minibatch_kmeans", "n_clusters": 200},
-            "labels": [0, 1, 1, 0, 1, 1, 2, 2, 3],
-            "annotated_tokens": _artifact_tokens([0, 1, 1, 0, 1, 1, 2, 2, 3]),
+            "labels": [0, 1, 1] * 5 + [2, 3] * 5,
+            "annotated_tokens": _artifact_tokens([0, 1, 1] * 5 + [2, 3] * 5),
         },
     ]
     with path.open("wb") as handle:
@@ -291,38 +321,39 @@ def test_run_collocation_cluster_experiment_writes_overlap_workbook(
     assert {
         "overview",
         "collocations_k100",
-        "pairs_k100",
-        "examples_k100",
         "collocations_k200",
-        "pairs_k200",
-        "examples_k200",
-    }.issubset(set(workbook.sheetnames))
+    } == set(workbook.sheetnames)
     assert workbook["overview"].freeze_panes == "A2"
 
     run_tables = result["run_tables"]
     first_run = run_tables[0]
-    assert isinstance(first_run["pairs"], pd.DataFrame)
-    pair = first_run["pairs"].loc[
-        (first_run["pairs"]["ngram"] == "грозить смертельный")
-        & (first_run["pairs"]["part_a"] == "грозить")
-        & (first_run["pairs"]["part_b"] == "смертельный")
-    ].iloc[0]
-    assert pair["exact_same_cluster_rate"] == pytest.approx(1.0)
-    assert pair["aggregate_same_cluster_rate"] == pytest.approx(1.0)
-    assert "ACTION" in pair["part_a_semclasses"]
-    assert "QUALITY" in pair["part_b_semclasses"]
+    assert isinstance(first_run["collocations"], pd.DataFrame)
+    first_collocations = first_run["collocations"]
+    assert set(first_collocations["collocation"]) == {
+        "грозить смертельный опасность",
+        "скорый помощь",
+    }
+    assert "грозить смертельный" not in set(first_collocations["collocation"])
 
-    trigram = first_run["collocations"].loc[
-        first_run["collocations"]["ngram"] == "грозить смертельный опасность"
+    trigram = first_collocations.loc[
+        first_collocations["collocation"] == "грозить смертельный опасность"
     ].iloc[0]
-    assert trigram["exact_all_parts_same_cluster_rate"] == pytest.approx(0.0)
-    assert trigram["exact_same_cluster_pair_rate"] == pytest.approx(1 / 3)
+    assert trigram["frequency"] == 5
+    assert trigram["part_1"] == "грозить"
+    assert "dominant in collocation: ACTION" in trigram["part_1_semclasses"]
+    assert "all: ACTION" in trigram["part_1_semclasses"]
+    assert trigram["cluster_counts"] == "грозить: 1\nсмертельный: 1\nопасность: 1"
+    assert trigram["intersecting_cluster_count"] == 0
+
+    bigram = first_collocations.loc[
+        first_collocations["collocation"] == "скорый помощь"
+    ].iloc[0]
+    assert bigram["part_3"] == ""
+    assert bigram["intersecting_cluster_count"] == 1
 
     second_run = run_tables[1]
-    assert isinstance(second_run["pairs"], pd.DataFrame)
-    split_pair = second_run["pairs"].loc[
-        (second_run["pairs"]["ngram"] == "грозить смертельный")
-        & (second_run["pairs"]["part_a"] == "грозить")
-        & (second_run["pairs"]["part_b"] == "смертельный")
+    assert isinstance(second_run["collocations"], pd.DataFrame)
+    split_bigram = second_run["collocations"].loc[
+        second_run["collocations"]["collocation"] == "скорый помощь"
     ].iloc[0]
-    assert split_pair["exact_same_cluster_rate"] == pytest.approx(0.0)
+    assert split_bigram["intersecting_cluster_count"] == 0
